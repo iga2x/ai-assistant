@@ -19,6 +19,10 @@ class ResponseParser:
         try:
             data = json.loads(raw_response)
             content = data.get("content", "")
+
+            if not content or not content.strip():
+                content = "I understood, but I do not have a clear response."
+
             intent = data.get("intent")
             reasoning = data.get("reasoning")
             plan = data.get("plan")

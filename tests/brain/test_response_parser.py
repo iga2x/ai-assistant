@@ -11,3 +11,10 @@ def test_parse_valid_json_with_content():
     assert result.plan is None
     assert result.raw == raw
     assert result.valid_json is True
+
+
+def test_parse_json_missing_content():
+    raw = '{"reasoning": "User asked", "intent": "chat_only", "plan": {"title": "Test"}}'
+    result = ResponseParser.parse_ai_response(raw)
+    assert result.content == "I understood, but I do not have a clear response."
+    assert result.valid_json is True
