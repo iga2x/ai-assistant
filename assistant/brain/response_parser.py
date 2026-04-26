@@ -17,6 +17,13 @@ class ResponseParser:
     @staticmethod
     def parse_ai_response(raw_response: str) -> ParsedAIResponse:
         try:
+            if not raw_response or not raw_response.strip():
+                return ParsedAIResponse(
+                    content="I understood, but I do not have a clear response.",
+                    raw=raw_response,
+                    valid_json=False
+                )
+
             data = json.loads(raw_response)
             content = data.get("content", "")
 

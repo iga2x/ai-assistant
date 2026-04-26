@@ -26,3 +26,10 @@ def test_parse_plain_text():
     assert result.content == "Hello! How can I help you today?"
     assert result.valid_json is False
     assert result.intent is None
+
+
+def test_parse_empty_response():
+    raw = ""
+    result = ResponseParser.parse_ai_response(raw)
+    assert result.content == "I understood, but I do not have a clear response."
+    assert result.valid_json is False
