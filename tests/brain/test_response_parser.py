@@ -33,3 +33,16 @@ def test_parse_empty_response():
     result = ResponseParser.parse_ai_response(raw)
     assert result.content == "I understood, but I do not have a clear response."
     assert result.valid_json is False
+
+
+def test_all_fields_accessible():
+    raw = '{"reasoning": "AI reasoning", "intent": "chat_only", "content": "Response content", "plan": {"title": "Test Plan"}}'
+    result = ResponseParser.parse_ai_response(raw)
+    assert hasattr(result, 'content')
+    assert hasattr(result, 'intent')
+    assert hasattr(result, 'reasoning')
+    assert hasattr(result, 'plan')
+    assert hasattr(result, 'raw')
+    assert hasattr(result, 'valid_json')
+    assert result.reasoning == "AI reasoning"
+    assert result.raw == raw
