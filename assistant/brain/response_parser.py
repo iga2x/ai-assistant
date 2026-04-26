@@ -35,6 +35,12 @@ class ResponseParser:
                 valid_json=True
             )
         except json.JSONDecodeError:
+            if raw_response.strip():
+                return ParsedAIResponse(
+                    content=raw_response.strip(),
+                    raw=raw_response,
+                    valid_json=False
+                )
             return ParsedAIResponse(
                 content="I understood, but I do not have a clear response.",
                 raw=raw_response,
