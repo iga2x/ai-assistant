@@ -42,6 +42,12 @@ class PrivacyConfig(BaseModel):
         "api_keys", "passwords", "cookies", "tokens", "private_reports", "client_data"
     ]
 
+class DebugConfig(BaseModel):
+    show_ai_reasoning: bool = False
+    show_raw_ai_response: bool = False
+    show_intent: bool = False
+    show_plan: bool = False
+
 class AppConfig(BaseModel):
     ai: AIConfig = Field(default_factory=AIConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
@@ -49,6 +55,7 @@ class AppConfig(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    debug: DebugConfig = Field(default_factory=DebugConfig)
 
 class ConfigManager:
     def __init__(self, config_path: Path = CONFIG_FILE):
