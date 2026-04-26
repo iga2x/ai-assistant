@@ -16,4 +16,23 @@ class ParsedAIResponse:
 class ResponseParser:
     @staticmethod
     def parse_ai_response(raw_response: str) -> ParsedAIResponse:
-        pass
+        try:
+            data = json.loads(raw_response)
+            content = data.get("content", "")
+            intent = data.get("intent")
+            reasoning = data.get("reasoning")
+            plan = data.get("plan")
+            return ParsedAIResponse(
+                content=content,
+                intent=intent,
+                reasoning=reasoning,
+                plan=plan,
+                raw=raw_response,
+                valid_json=True
+            )
+        except json.JSONDecodeError:
+            return ParsedAIResponse(
+                content="I understood, but I do not have a clear response.",
+                raw=raw_response,
+                valid_json=False
+            )
