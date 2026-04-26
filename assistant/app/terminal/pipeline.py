@@ -2,6 +2,7 @@ from assistant.context.normalizer import InputNormalizer
 from assistant.context.resolver import ContextResolver
 from assistant.context.entities import EntityStore
 from assistant.brain.prompt_builder import PromptBuilder
+from assistant.brain.response_parser import ResponseParser
 from assistant.ai.router import AIRouter
 from assistant.tasks.planner import Planner
 from assistant.db.services import ConversationService
@@ -49,9 +50,12 @@ class ChatPipeline:
         
         # 6. AI Router (Get response)
         raw_output = await self.router.chat_completion(messages)
-        
-        # 7. Planner (Create action request or plan)
-        response = self.planner.create_plan(raw_output, resolved)
+
+        # 6.5. Parse AI response (extract content, handle edge cases)
+        parsed = ResponseParser.parse_ai_response(raw_output)
+
+        # 7. Planner (Create action request or plan) - use parsed content for plan generation
+        response = self.planner.create_plan(parsed.content, resolved)
         
         # 8. Action Execution (Handle read-only actions directly)
         if response.action_request and response.action_request.action_type == "read_only_system_action":
@@ -70,5 +74,8 @@ class ChatPipeline:
         # 9. Store (Original input and response)
         self.conv_service.save_message(conversation_id, "user", user_input)
         self.conv_service.save_message(conversation_id, "assistant", response.content)
-        
+
+        # Store parsed data for debug access
+        response._parsed = parsed
+
         return response
