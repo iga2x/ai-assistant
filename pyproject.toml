@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ai-assistant"
 version = "0.1.0"
 authors = [
-    { name = "AI Assistant Developer", email = "dev@example.com" },
+    { name = "AI Assistant Developer", email = "dev@assistant.local" },
 ]
 description = "A clean, installable terminal AI assistant for PC tasks, coding, and security workflows."
 readme = "README.md"
@@ -22,6 +22,7 @@ dependencies = [
     "rich>=13.0.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
+    "packaging>=21.0",
     "sqlalchemy>=2.0.0",
     "requests>=2.31.0",
     "httpx>=0.24.0",
