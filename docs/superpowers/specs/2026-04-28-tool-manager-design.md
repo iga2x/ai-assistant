@@ -1,7 +1,7 @@
 # Tool Management System Design
 
 **Date:** 2026-04-28
-**Status:** Design Complete
+**Status:** Design Complete (v2 - Patched)
 **Priority:** High
 
 ## Overview
@@ -18,6 +18,12 @@ Current tool system has critical flaws:
 - No dependency checking
 - No safety guards for offensive tools
 - Hard-coded metadata in detector.py (should be pure)
+- No version constraints or compatibility checking
+- No update mechanism
+- No tool location awareness
+- No install lock / concurrency control
+- No persistent state / cache
+- Static capability mapping
 
 ## Solution
 
@@ -75,6 +81,22 @@ assistant/tools/
 3. **Metadata separation:** `CORE_TOOLS` in `metadata.py`, not `detector.py`
 4. **Immutability:** Never mutate tool metadata inside functions
 
+### Architectural Evolution
+
+The current design provides a solid foundation. Future evolution toward a three-layer architecture:
+
+**Current:** ToolManager (combined operations and selection)
+
+**Future:**
+- **ToolRegistry** - Pure data management (load, save, validate metadata)
+- **ToolManager** - Operations (install, update, detect, cache)
+- **ToolSelector** - AI decision layer (intelligent tool selection based on requirements)
+
+This separation will enable:
+- Easier testing of each component
+- Pluggable selection strategies
+- Better separation of data, operations, and AI logic
+
 ---
 
 ## Components & Data Flow
@@ -85,33 +107,43 @@ assistant/tools/
 CORE_TOOLS = {
     "nmap": {
         "name": "nmap",
+        "binary": "nmap",  # defaults to name if not specified
         "ecosystem": "apt",
         "install_cmd": "apt install nmap",
         "version_flags": ["--version", "-V"],
+        "version_required": ">=7.0.0",
         "category": "scanner",
         "risk": "medium",
         "alternatives": [],
         "docs_url": "https://nmap.org/book/man.html",
-        "deprecated": False
+        "deprecated": False,
+        "priority": 10,
+        "speed": "medium",
+        "accuracy": "high"
     },
     "nuclei": {
         "name": "nuclei",
+        "binary": "nuclei",
         "ecosystem": "go",
         "install_cmd": "go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
         "version_flags": ["-version"],
+        "version_required": ">=3.0.0",
         "category": "scanner",
         "risk": "high",
         "alternatives": [],
         "docs_url": "https://github.com/projectdiscovery/nuclei",
-        "deprecated": False
+        "deprecated": False,
+        "priority": 9,
+        "speed": "fast",
+        "accuracy": "high"
     },
     # ... 80-100 curated tools
 }
 ```
 
 **Fields:**
-- **Required:** `name`, `ecosystem`, `install_cmd`, `version_flags`
-- **Optional:** `category`, `risk`, `alternatives`, `docs_url`, `deprecated`
+- **Required:** `name`, `ecosystem`, `install_cmd`, `version_flags`, `version_required`
+- **Optional:** `binary`, `category`, `risk`, `alternatives`, `docs_url`, `deprecated`, `priority`, `speed`, `accuracy`
 
 ### Component 2: custom_tools.yaml (User Data)
 
@@ -151,8 +183,9 @@ BAD_VERSION_CMDS = {
 
 ```python
 def detect_tool(metadata: Dict) -> ToolInfo:
-    """Pure function. No side effects. No installs."""
-    path = shutil.which(metadata["name"])
+    """Pure function. No side effects. No installs. Never mutates metadata."""
+    binary = metadata.get("binary", metadata["name"])
+    path = shutil.which(binary)
 
     if not path:
         return ToolInfo(
@@ -160,21 +193,27 @@ def detect_tool(metadata: Dict) -> ToolInfo:
             status=ToolStatus.NOT_FOUND
         )
 
-    version = get_tool_version(metadata["version_flags"])
+    version = get_tool_version(binary, metadata["version_flags"])
+
+    # Check if version meets requirements
+    status = ToolStatus.INSTALLED
+    if version != "unknown" and "version_required" in metadata:
+        if not _meets_version_requirement(version, metadata["version_required"]):
+            status = ToolStatus.OUTDATED
 
     return ToolInfo(
         name=metadata["name"],
-        status=ToolStatus.INSTALLED,
+        status=status,
         version=version,
         path=path
     )
 
-def get_tool_version(version_flags: List[str]) -> str:
+def get_tool_version(binary: str, version_flags: List[str]) -> str:
     """Try multiple version flags in order."""
     for flag in version_flags:
         try:
             result = subprocess.run(
-                f"tool {flag}".split(),
+                [binary, flag],
                 capture_output=True,
                 timeout=2.0
             )
@@ -183,6 +222,11 @@ def get_tool_version(version_flags: List[str]) -> str:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             continue
     return "unknown"
+
+def _meets_version_requirement(current: str, required: str) -> bool:
+    """Check if current version meets requirement (e.g., '>=3.0.0')."""
+    # Implementation using packaging.version or similar
+    pass
 ```
 
 ### Component 5: installer.py (Install Handlers)
@@ -204,6 +248,89 @@ def install_tool(tool: Dict) -> Result:
         return install_binary(tool)
     elif ecosystem == "manual-note":
         return show_manual_instructions(tool)
+
+def update_tool(tool: Dict) -> Result:
+    """Update one tool to latest version."""
+    ecosystem = tool["ecosystem"]
+
+    if ecosystem == "apt":
+        return update_apt(tool, sudo=True)
+    elif ecosystem == "go":
+        return update_go(tool)
+    elif ecosystem == "pip":
+        return update_pip(tool)
+    elif ecosystem == "cargo":
+        return update_cargo(tool)
+    else:
+        return Result(
+            success=False,
+            code=ErrorCode.NOT_FOUND,
+            message=f"Update not supported for ecosystem: {ecosystem}"
+        )
+
+def update_apt(tool: Dict, sudo: bool) -> Result:
+    cmd = f"{'sudo ' if sudo else ''}apt upgrade -y {tool['name']}"
+    result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
+
+    if result.returncode != 0:
+        return Result(
+            success=False,
+            code=ErrorCode.INSTALL_FAILED,
+            message="Update failed",
+            stderr=result.stderr.decode(),
+            hint="Check apt repository or run 'apt update'"
+        )
+
+    return Result(success=True)
+
+def update_go(tool: Dict) -> Result:
+    cmd = f"go install -v github.com/projectdiscovery/{tool['name']}/v3/cmd/{tool['name']}@latest"
+    result = subprocess.run(cmd.split(), capture_output=True, timeout=600)
+
+    if result.returncode != 0:
+        return Result(
+            success=False,
+            code=ErrorCode.INSTALL_FAILED,
+            message="Go update failed",
+            stderr=result.stderr.decode(),
+            hint="Check Go installation and network connectivity"
+        )
+
+    return Result(success=True)
+
+def update_pip(tool: Dict) -> Result:
+    if shutil.which("pipx"):
+        cmd = f"pipx upgrade {tool['name']}"
+    else:
+        cmd = f"pip3 install --upgrade --user {tool['name']}"
+
+    result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
+
+    if result.returncode != 0:
+        return Result(
+            success=False,
+            code=ErrorCode.INSTALL_FAILED,
+            message="Pip update failed",
+            stderr=result.stderr.decode(),
+            hint="Check Python environment"
+        )
+
+    return Result(success=True)
+
+def update_cargo(tool: Dict) -> Result:
+    cmd = f"cargo install {tool['name']} --force"
+    result = subprocess.run(cmd.split(), capture_output=True, timeout=600)
+
+    if result.returncode != 0:
+        return Result(
+            success=False,
+            code=ErrorCode.INSTALL_FAILED,
+            message="Cargo update failed",
+            stderr=result.stderr.decode(),
+            hint="Check Rust installation"
+        )
+
+    return Result(success=True)
 
 def install_apt(tool: Dict, sudo: bool) -> Result:
     cmd = f"{'sudo ' if sudo else ''}apt install -y {tool['name']}"
@@ -240,8 +367,21 @@ class ToolManager:
         self.detector = Detector()
         self.resolver = Resolver()
 
-    def detect(self) -> List[ToolInfo]:
-        """Load metadata, call detector, return results."""
+        # Concurrency control
+        self._install_lock = threading.Lock()
+
+        # Persistent state
+        self._cache_path = os.path.expanduser("~/.assistant/cache/tools.json")
+        self._cache_ttl = 300  # 5 minutes
+        self._failed_installs_path = os.path.expanduser("~/.assistant/cache/failed_installs.json")
+
+    def detect(self, use_cache: bool = True) -> List[ToolInfo]:
+        """Load metadata, call detector, return results. Never mutates metadata."""
+        if use_cache:
+            cached = self._load_cache()
+            if cached:
+                return cached
+
         all_tools = {**self.core_tools, **self.custom_tools}
         detected = []
 
@@ -249,39 +389,95 @@ class ToolManager:
             resolved = self.resolver.resolve(name)
             if resolved is None:  # deprecated without replacement
                 continue
-            metadata["name"] = resolved
-            detected.append(self.detector.detect_tool(metadata))
+
+            # Create runtime copy, never mutate original metadata
+            runtime_metadata = dict(metadata)
+            runtime_metadata["name"] = resolved
+            detected.append(self.detector.detect_tool(runtime_metadata))
+
+        # Cache results
+        self._save_cache(detected)
 
         return detected
 
     def get_missing(self, category: str = None) -> List[Dict]:
-        """Filter uninstalled tools."""
+        """Filter uninstalled or outdated tools."""
         detected = self.detect()
-        missing = [t for t in detected if t.status != ToolStatus.INSTALLED]
+        missing = [t for t in detected if t.status not in [ToolStatus.INSTALLED, ToolStatus.OUTDATED]]
 
         if category:
             missing = [t for t in missing if t.category == category]
 
         return [self._tool_info_to_dict(t) for t in missing]
 
-    def create_install_plan(self, categories: List[str] = None) -> InstallPlan:
-        """Create install plan for user approval."""
-        missing = self.get_missing()
+    def get_outdated(self) -> List[Dict]:
+        """Get tools that are installed but don't meet version requirements."""
+        detected = self.detect()
+        outdated = [t for t in detected if t.status == ToolStatus.OUTDATED]
+        return [self._tool_info_to_dict(t) for t in outdated]
 
-        if categories:
-            missing = [t for t in missing if t["category"] in categories]
+    def create_install_plan_for_categories(self, categories: List[str]) -> InstallPlan:
+        """Create install plan for specific categories."""
+        missing = self.get_missing()
+        filtered = [t for t in missing if t["category"] in categories]
+        return self._create_install_plan(filtered)
+
+    def create_install_plan_for_tools(self, tool_names: List[str]) -> InstallPlan:
+        """Create install plan for specific tools."""
+        all_tools = {**self.core_tools, **self.custom_tools}
+        filtered = []
+
+        for name in tool_names:
+            if name in all_tools:
+                metadata = dict(all_tools[name])  # Copy, don't mutate
+                metadata["name"] = self.resolver.resolve(name) or name
+                filtered.append(metadata)
+
+        return self._create_install_plan(filtered)
+
+    def _create_install_plan(self, tools: List[Dict]) -> InstallPlan:
+        """Create install plan from tool list. Never mutates input."""
+        # Create runtime copies for dependency info
+        runtime_tools = []
+        for tool in tools:
+            runtime_tool = dict(tool)
+            deps = self._check_dependencies(runtime_tool)
+
+            # Store dependency info in runtime copy only
+            runtime_tool["dependencies_ok"] = deps.available
+            runtime_tool["dependency_hint"] = deps.hint if not deps.available else ""
+            runtime_tool["installer_hint"] = deps.installer_hint
+
+            runtime_tools.append(runtime_tool)
 
         # Group by ecosystem
-        grouped = self._group_by_ecosystem(missing)
+        grouped = self._group_by_ecosystem(runtime_tools)
 
-        # Check dependencies
-        for ecosystem, tools in grouped.items():
-            for tool in tools:
-                deps = self._check_dependencies(tool)
-                tool["dependencies_ok"] = deps.available
-                tool["dependency_hint"] = deps.hint if not deps.available else ""
+        return InstallPlan(tools=grouped, total=len(runtime_tools))
 
-        return InstallPlan(tools=grouped, total=len(missing))
+    def update_tool(self, tool_name: str) -> Result:
+        """Update a single tool to latest version."""
+        metadata = self._get_tool_metadata(tool_name)
+        if not metadata:
+            return Result(success=False, code=ErrorCode.NOT_FOUND, message=f"Tool {tool_name} not found")
+
+        with self._install_lock:
+            result = self.installer.update_tool(metadata)
+            if result.success:
+                self._clear_cache()
+            return result
+
+    def update_all(self) -> Dict[str, Result]:
+        """Update all installed tools."""
+        detected = self.detect()
+        installed = [t for t in detected if t.status == ToolStatus.INSTALLED]
+
+        results = {}
+        for tool in installed:
+            results[tool.name] = self.update_tool(tool.name)
+
+        self._clear_cache()
+        return results
 
     def present_install_plan(self, plan: InstallPlan):
         """Show plan and get user approval."""
@@ -302,16 +498,17 @@ class ToolManager:
         self._execute_install(selected)
 
     def _execute_install(self, tools: List[Dict]):
-        """Install with approval guard."""
-        for tool in tools:
-            # Safety check for high-risk tools
-            if self._is_high_risk(tool):
-                if not self._get_approval([tool]):
-                    print(f"Skipped {tool['name']} (high-risk)")
-                    continue
+        """Install with approval guard and concurrency control."""
+        with self._install_lock:
+            for tool in tools:
+                # Safety check for high-risk tools
+                if self._is_high_risk(tool):
+                    if not self._get_approval([tool]):
+                        print(f"Skipped {tool['name']} (high-risk usage tool, requires explicit approval)")
+                        continue
 
-            # Check dependencies
-            deps = self._check_dependencies(tool)
+                # Check dependencies
+                deps = self._check_dependencies(tool)
             if not deps.available:
                 print(f"Skipped {tool['name']}: {deps.hint}")
                 continue
@@ -328,7 +525,77 @@ class ToolManager:
                     print(f"  Hint: {result.hint}")
 
         # Re-detect
-        self.detect()
+        self.detect(use_cache=False)
+
+    def _load_cache(self) -> Optional[List[ToolInfo]]:
+        """Load cached detection results if not expired."""
+        if not os.path.exists(self._cache_path):
+            return None
+
+        try:
+            with open(self._cache_path, 'r') as f:
+                data = json.load(f)
+
+            cached_time = data.get('timestamp', 0)
+            if time.time() - cached_time > self._cache_ttl:
+                return None
+
+            return [ToolInfo(**item) for item in data.get('tools', [])]
+        except Exception:
+            return None
+
+    def _save_cache(self, tools: List[ToolInfo]):
+        """Save detection results to cache."""
+        try:
+            os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
+
+            with open(self._cache_path, 'w') as f:
+                json.dump({
+                    'timestamp': time.time(),
+                    'tools': [t.model_dump() for t in tools]
+                }, f, indent=2)
+        except Exception:
+            pass
+
+    def _clear_cache(self):
+        """Clear cached detection results."""
+        try:
+            if os.path.exists(self._cache_path):
+                os.remove(self._cache_path)
+        except Exception:
+            pass
+
+    def _record_failed_install(self, tool_name: str, error: Result):
+        """Record failed installation for future reference."""
+        try:
+            os.makedirs(os.path.dirname(self._failed_installs_path), exist_ok=True)
+
+            failed = {}
+            if os.path.exists(self._failed_installs_path):
+                with open(self._failed_installs_path, 'r') as f:
+                    failed = json.load(f)
+
+            failed[tool_name] = {
+                'error': error.code,
+                'message': error.message,
+                'last_attempt': time.time(),
+                'retry_count': failed.get(tool_name, {}).get('retry_count', 0) + 1
+            }
+
+            with open(self._failed_installs_path, 'w') as f:
+                json.dump(failed, f, indent=2)
+        except Exception:
+            pass
+
+    def _get_failed_installs(self) -> Dict[str, Dict]:
+        """Get history of failed installations."""
+        try:
+            if os.path.exists(self._failed_installs_path):
+                with open(self._failed_installs_path, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
 ```
 
 ### Data Flow
@@ -477,6 +744,7 @@ class ToolStatus:
     NOT_IN_PATH = "not_in_path"
     PERMISSION_DENIED = "permission_denied"
     BROKEN = "broken"
+    OUTDATED = "outdated"
 
 CRITICAL_ERRORS = {
     ErrorCode.PERMISSION_DENIED,
@@ -758,33 +1026,119 @@ suggested = manager.suggest_tools_for_capability("port_scan")
 
 ```python
 CAPABILITY_MAP = {
-    "port_scan": ["nmap", "masscan", "rustscan"],
-    "subdomain_enum": ["subfinder", "amass", "assetfinder"],
-    "vuln_scan": ["nuclei", "nikto"],
-    "web_fuzzing": ["ffuf", "gobuster", "dirsearch"],
-    "sql_injection": ["sqlmap"],
-    "password_cracking": ["john", "hashcat", "hydra"],
-    "wifi_auditing": ["aircrack-ng", "wifite", "reaver"],
-    "memory_forensics": ["volatility", "volatility3"],
+    "port_scan": {
+        "nmap": {"priority": 10, "speed": "medium", "accuracy": "high"},
+        "masscan": {"priority": 8, "speed": "fast", "accuracy": "medium"},
+        "rustscan": {"priority": 7, "speed": "fast", "accuracy": "medium"}
+    },
+    "subdomain_enum": {
+        "subfinder": {"priority": 10, "speed": "fast", "accuracy": "high"},
+        "amass": {"priority": 9, "speed": "slow", "accuracy": "very_high"},
+        "assetfinder": {"priority": 6, "speed": "fast", "accuracy": "medium"}
+    },
+    "vuln_scan": {
+        "nuclei": {"priority": 10, "speed": "fast", "accuracy": "high"},
+        "nikto": {"priority": 7, "speed": "medium", "accuracy": "medium"}
+    },
+    "web_fuzzing": {
+        "ffuf": {"priority": 10, "speed": "fast", "accuracy": "high"},
+        "gobuster": {"priority": 8, "speed": "medium", "accuracy": "high"},
+        "dirsearch": {"priority": 6, "speed": "medium", "accuracy": "medium"}
+    },
+    "sql_injection": {
+        "sqlmap": {"priority": 10, "speed": "medium", "accuracy": "high"}
+    },
+    "password_cracking": {
+        "john": {"priority": 9, "speed": "medium", "accuracy": "high"},
+        "hashcat": {"priority": 10, "speed": "fast", "accuracy": "high"},
+        "hydra": {"priority": 8, "speed": "medium", "accuracy": "medium"}
+    },
+    "wifi_auditing": {
+        "aircrack-ng": {"priority": 10, "speed": "medium", "accuracy": "high"},
+        "wifite": {"priority": 9, "speed": "medium", "accuracy": "high"},
+        "reaver": {"priority": 6, "speed": "slow", "accuracy": "medium"}
+    },
+    "memory_forensics": {
+        "volatility": {"priority": 8, "speed": "medium", "accuracy": "high"},
+        "volatility3": {"priority": 10, "speed": "medium", "accuracy": "high"}
+    },
 }
+
+class ToolSelector:
+    """AI decision layer for tool selection based on requirements."""
+
+    def __init__(self, manager: ToolManager):
+        self.manager = manager
+        self.capability_map = CAPABILITY_MAP
+
+    def select_best_tool(self, capability: str, preference: str = "balanced") -> Optional[str]:
+        """
+        Select best tool for a capability based on preference.
+
+        preference: 'speed', 'accuracy', 'balanced'
+        """
+        if capability not in self.capability_map:
+            return None
+
+        tools = self.capability_map[capability]
+        available = [t for t in tools.keys() if self.manager.is_available(t)]
+
+        if not available:
+            return None
+
+        if preference == "speed":
+            # Sort by speed (fast > medium > slow)
+            speed_order = {"fast": 3, "medium": 2, "slow": 1}
+            return max(available, key=lambda t: speed_order[tools[t]["speed"]])
+
+        elif preference == "accuracy":
+            # Sort by accuracy (very_high > high > medium)
+            accuracy_order = {"very_high": 3, "high": 2, "medium": 1}
+            return max(available, key=lambda t: accuracy_order[tools[t]["accuracy"]])
+
+        else:  # balanced
+            # Sort by priority
+            return max(available, key=lambda t: tools[t]["priority"])
+
+    def get_tools_by_capability(self, capability: str) -> List[str]:
+        """Get all available tools for a capability."""
+        if capability not in self.capability_map:
+            return []
+
+        return [t for t in self.capability_map[capability].keys()
+                if self.manager.is_available(t)]
+
+    def get_missing_tools_for_capability(self, capability: str) -> List[str]:
+        """Get missing tools for a capability."""
+        if capability not in self.capability_map:
+            return []
+
+        return [t for t in self.capability_map[capability].keys()
+                if not self.manager.is_available(t)]
 ```
 
 ### AI Integration Rules
 
 ```python
-# AI can suggest tools
-def suggest_tools_for_task(task: str) -> List[str]:
-    tools = CAPABILITY_MAP.get(task, [])
-    return [t for t in tools if manager.is_available(t)]
+# AI uses ToolSelector for intelligent tool selection
+selector = ToolSelector(manager)
 
-# AI can create install plans
-def create_install_plan_for_task(task: str) -> InstallPlan:
-    tools = CAPABILITY_MAP.get(task, [])
-    return manager.create_install_plan(tools)
+# AI can suggest best tool for capability
+def suggest_best_tool(capability: str, preference: str = "balanced") -> Optional[str]:
+    return selector.select_best_tool(capability, preference)
+
+# AI can get all available tools for capability
+def get_available_tools(capability: str) -> List[str]:
+    return selector.get_tools_by_capability(capability)
+
+# AI can create install plans for capabilities
+def create_install_plan_for_capability(capability: str) -> InstallPlan:
+    missing = selector.get_missing_tools_for_capability(capability)
+    return manager.create_install_plan_for_tools(missing)
 
 # AI CANNOT silently install tools
-def install_tools_for_task(task: str):
-    plan = create_install_plan_for_task(task)
+def install_tools_for_capability(capability: str):
+    plan = create_install_plan_for_capability(capability)
     manager.present_install_plan(plan)  # User must approve
     # No direct install calls from AI
 ```
@@ -888,18 +1242,25 @@ class ToolCapabilityLayer:
 
 ## Success Criteria
 
-1. ✅ Detector is pure (no install calls, no data ownership)
-2. ✅ All 59+ core tools have correct metadata
-3. ✅ Version detection works for all tools (correct flags)
+1. ✅ Detector is pure (no install calls, no data ownership, no metadata mutation)
+2. ✅ All 59+ core tools have correct metadata (version_required, binary, ecosystem)
+3. ✅ Version detection works for all tools (correct flags, binary detection)
 4. ✅ Installation works for all ecosystems (apt, go, pip, cargo, binary)
-5. ✅ Dependency checking prevents failed installs
-6. ✅ Safety guards prevent unauthorized high-risk tool installation
-7. ✅ Batch approval flow works correctly
-8. ✅ Error handling provides actionable feedback
-9. ✅ AI can suggest tools and create plans but not silently install
-10. ✅ Custom tools can be added via YAML
-11. ✅ Tests achieve coverage targets
-12. ✅ Backward compatible with existing tool wrappers
+5. ✅ Update mechanism works (update_tool, update_all)
+6. ✅ Dependency checking prevents failed installs
+7. ✅ Safety guards prevent unauthorized high-risk tool installation
+8. ✅ Batch approval flow works correctly
+9. ✅ Error handling provides actionable feedback (structured codes)
+10. ✅ Version constraint checking (OUTDATED status)
+11. ✅ Tool location awareness (path stored in ToolInfo)
+12. ✅ Install lock prevents concurrent installations
+13. ✅ Cache layer with TTL (5 minutes)
+14. ✅ Failure memory for learning from errors
+15. ✅ AI can suggest tools and create plans but not silently install
+16. ✅ ToolSelector for intelligent tool selection
+17. ✅ Custom tools can be added via YAML
+18. ✅ Tests achieve coverage targets
+19. ✅ Backward compatible with existing tool wrappers
 
 ---
 
@@ -920,13 +1281,12 @@ class ToolCapabilityLayer:
 ## Future Enhancements
 
 1. **Auto-discovery** - Scan PATH for unknown tools, suggest additions to custom_tools.yaml
-2. **Version constraints** - Support minimum version requirements in metadata
-3. **Tool health checks** - Verify tools actually work (not just installed)
-4. **Tool profiles** - Pre-defined tool sets for bug bounty, pentesting, forensics
-5. **Installation presets** - Quick install of tool categories
-6. **Update checking** - Check for tool updates
-7. **Uninstall capability** - Clean tool removal
-8. **Tool verification** - Hash verification for downloaded binaries
+2. **Tool health checks** - Verify tools actually work (not just installed)
+3. **Tool profiles** - Pre-defined tool sets for bug bounty, pentesting, forensics
+4. **Installation presets** - Quick install of tool categories
+5. **Uninstall capability** - Clean tool removal
+6. **Tool verification** - Hash verification for downloaded binaries
+7. **Advanced failure recovery** - Automatic retry strategies for known failures
 
 ---
 
