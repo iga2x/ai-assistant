@@ -579,359 +579,6 @@ def update_tool(tool: Dict, dry_run: bool = False, progress_callback=None) -> Re
             hint=f"Tool {tool['name']} cannot be auto-updated",
             stage="update"
         )
-    """Install one tool. Called ONLY by manager.py."""
-    ecosystem = tool["ecosystem"]
-
-    if ecosystem == "apt":
-        return install_apt(tool, sudo=True)
-    elif ecosystem == "go":
-        return install_go(tool)
-    elif ecosystem == "pip":
-        return install_pip(tool)  # prefers pipx
-    elif ecosystem == "cargo":
-        return install_cargo(tool)
-    elif ecosystem == "binary":
-        return install_binary(tool)
-    elif ecosystem == "manual-note":
-        return show_manual_instructions(tool)
-
-def update_tool(tool: Dict) -> Result:
-    """Update one tool to latest version."""
-    ecosystem = tool["ecosystem"]
-
-    if ecosystem == "apt":
-        return update_apt(tool, sudo=True)
-    elif ecosystem == "go":
-        return update_go(tool)
-    elif ecosystem == "pip":
-        return update_pip(tool)
-    elif ecosystem == "cargo":
-        return update_cargo(tool)
-    else:
-        return Result(
-            success=False,
-            code=ErrorCode.NOT_FOUND,
-            message=f"Update not supported for ecosystem: {ecosystem}"
-        )
-
-def update_apt(tool: Dict, sudo: bool) -> Result:
-    cmd = f"{'sudo ' if sudo else ''}apt upgrade -y {tool['name']}"
-    result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
-
-    if result.returncode != 0:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message="Update failed",
-            stderr=result.stderr.decode(),
-            hint="Check apt repository or run 'apt update'"
-        )
-
-    return Result(success=True)
-
-def update_go(tool: Dict) -> Result:
-    cmd = f"go install -v github.com/projectdiscovery/{tool['name']}/v3/cmd/{tool['name']}@latest"
-    result = subprocess.run(cmd.split(), capture_output=True, timeout=600)
-
-    if result.returncode != 0:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message="Go update failed",
-            stderr=result.stderr.decode(),
-            hint="Check Go installation and network connectivity"
-        )
-
-    return Result(success=True)
-
-def update_pip(tool: Dict) -> Result:
-    if shutil.which("pipx"):
-        cmd = f"pipx upgrade {tool['name']}"
-    else:
-        cmd = f"pip3 install --upgrade --user {tool['name']}"
-
-    result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
-
-    if result.returncode != 0:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message="Pip update failed",
-            stderr=result.stderr.decode(),
-            hint="Check Python environment"
-        )
-
-    return Result(success=True)
-
-def update_cargo(tool: Dict, progress_callback=None) -> Result:
-    cmd = f"cargo install {tool['name']} --force"
-    result = subprocess.run(cmd.split(), capture_output=True, timeout=600)
-
-    if result.returncode != 0:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message="Cargo update failed",
-            stderr=result.stderr.decode(),
-            hint="Check Rust installation",
-            stage="update"
-        )
-
-    return Result(success=True)
-
-def install_apt(tool: Dict, sudo: bool, progress_callback=None) -> Result:
-    cmd = f"{'sudo ' if sudo else ''}apt install -y {tool['name']}"
-
-    try:
-        result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
-
-        if result.returncode != 0:
-            stderr = result.stderr.decode()
-            error_msg = "Install failed"
-
-            if "Unable to locate package" in stderr:
-                error_msg = f"Package {tool['name']} not found in repository"
-            elif "Permission denied" in stderr:
-                return Result(
-                    success=False,
-                    code=ErrorCode.PERMISSION_DENIED,
-                    message="Permission denied",
-                    stderr=stderr,
-                    hint="Try running with sudo or as root",
-                    stage="install"
-                )
-
-            return Result(
-                success=False,
-                code=ErrorCode.INSTALL_FAILED,
-                message=error_msg,
-                stderr=stderr,
-                hint="Run 'apt update' and try again",
-                stage="install"
-            )
-
-        return Result(success=True, stage="install")
-
-    except subprocess.TimeoutExpired:
-        return Result(
-            success=False,
-            code=ErrorCode.TIMEOUT,
-            message="Installation timeout",
-            hint="Network issue or large package",
-            stage="install"
-        )
-    except PermissionError:
-        return Result(
-            success=False,
-            code=ErrorCode.PERMISSION_DENIED,
-            message="Permission denied",
-            hint="Use sudo or run as root",
-            stage="install"
-        )
-    except Exception as e:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message=f"Unexpected error: {str(e)}",
-            hint="Check system logs for details",
-            stage="install"
-        )
-
-
-def install_go(tool: Dict, progress_callback=None) -> Result:
-    """Install Go tool."""
-    cmd = tool['install_cmd']
-
-    try:
-        result = subprocess.run(cmd.split(), capture_output=True, timeout=600)
-
-        if result.returncode != 0:
-            return Result(
-                success=False,
-                code=ErrorCode.INSTALL_FAILED,
-                message="Go installation failed",
-                stderr=result.stderr.decode(),
-                hint="Check Go installation and network connectivity",
-                stage="install"
-            )
-
-        # Check if ~/go/bin is in PATH
-        import os
-        go_bin = os.path.expanduser("~/go/bin")
-        path_dirs = os.getenv('PATH', '').split(':')
-
-        if go_bin not in path_dirs:
-            return Result(
-                success=True,
-                message=f"{tool['name']} installed via Go",
-                hint=f"⚠️  Add {go_bin} to PATH or run: export PATH=$PATH:{go_bin}",
-                stage="install"
-            )
-
-        return Result(success=True, stage="install")
-
-    except subprocess.TimeoutExpired:
-        return Result(
-            success=False,
-            code=ErrorCode.TIMEOUT,
-            message="Go installation timeout",
-            hint="Network issue or large download",
-            stage="install"
-        )
-    except Exception as e:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message=f"Unexpected error: {str(e)}",
-            hint="Check Go installation",
-            stage="install"
-        )
-
-
-def install_pip(tool: Dict, progress_callback=None) -> Result:
-    """Prefer pipx over system pip."""
-    if shutil.which("pipx"):
-        cmd = f"pipx install {tool['name']}"
-        ecosystem = "pipx"
-    else:
-        cmd = f"pip3 install --user {tool['name']}"
-        ecosystem = "pip"
-        logger.warning(f"pipx not found, using system pip. Consider installing pipx for better isolation.")
-
-    try:
-        result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
-
-        if result.returncode != 0:
-            stderr = result.stderr.decode()
-            return Result(
-                success=False,
-                code=ErrorCode.INSTALL_FAILED,
-                message=f"{ecosystem} installation failed",
-                stderr=stderr,
-                hint="Check Python environment and pip configuration",
-                stage="install"
-            )
-
-        # Check if ~/.local/bin is in PATH (for pip install --user)
-        if ecosystem == "pip":
-            local_bin = os.path.expanduser("~/.local/bin")
-            path_dirs = os.getenv('PATH', '').split(':')
-
-            if local_bin not in path_dirs:
-                return Result(
-                    success=True,
-                    message=f"{tool['name']} installed via pip",
-                    hint=f"⚠️  Add {local_bin} to PATH or run: export PATH=$PATH:{local_bin}",
-                    stage="install"
-                )
-
-        return Result(success=True, stage="install")
-
-    except subprocess.TimeoutExpired:
-        return Result(
-            success=False,
-            code=ErrorCode.TIMEOUT,
-            message="Pip installation timeout",
-            hint="Network issue or large package",
-            stage="install"
-        )
-    except Exception as e:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message=f"Unexpected error: {str(e)}",
-            hint="Check Python environment",
-            stage="install"
-        )
-
-
-def install_cargo(tool: Dict, progress_callback=None) -> Result:
-    """Install Rust tool via cargo."""
-    cmd = f"cargo install {tool['name']}"
-
-    try:
-        result = subprocess.run(cmd.split(), capture_output=True, timeout=600)
-
-        if result.returncode != 0:
-            return Result(
-                success=False,
-                code=ErrorCode.INSTALL_FAILED,
-                message="Cargo installation failed",
-                stderr=result.stderr.decode(),
-                hint="Check Rust installation and network connectivity",
-                stage="install"
-            )
-
-        # Check if ~/.cargo/bin is in PATH
-        import os
-        cargo_bin = os.path.expanduser("~/.cargo/bin")
-        path_dirs = os.getenv('PATH', '').split(':')
-
-        if cargo_bin not in path_dirs:
-            return Result(
-                success=True,
-                message=f"{tool['name']} installed via cargo",
-                hint=f"⚠️  Add {cargo_bin} to PATH or run: export PATH=$PATH:{cargo_bin}",
-                stage="install"
-            )
-
-        return Result(success=True, stage="install")
-
-    except subprocess.TimeoutExpired:
-        return Result(
-            success=False,
-            code=ErrorCode.TIMEOUT,
-            message="Cargo installation timeout",
-            hint="Network issue or large download",
-            stage="install"
-        )
-    except Exception as e:
-        return Result(
-            success=False,
-            code=ErrorCode.INSTALL_FAILED,
-            message=f"Unexpected error: {str(e)}",
-            hint="Check Rust installation",
-            stage="install"
-        )
-
-
-def install_binary(tool: Dict, progress_callback=None) -> Result:
-    """Install binary manually."""
-    return Result(
-        success=False,
-        code=ErrorCode.NOT_FOUND,
-        message=f"Binary installation not automated for {tool['name']}",
-        hint=f"Manual installation required: {tool['install_cmd']}",
-        stage="install"
-    )
-
-
-def show_manual_instructions(tool: Dict) -> Result:
-    """Show manual installation instructions."""
-    return Result(
-        success=False,
-        code=ErrorCode.NOT_FOUND,
-        message=f"Manual installation required for {tool['name']}",
-        hint=f"Install instructions: {tool.get('docs_url', tool['install_cmd'])}",
-        stage="install"
-    )
-
-
-def install_with_retry(tool: Dict, max_attempts: int = 2, progress_callback=None) -> Result:
-    """Install with retry for retryable errors."""
-    for attempt in range(max_attempts):
-        result = install_tool(tool, progress_callback=progress_callback)
-
-        if result.success:
-            return result
-
-        if result.code not in RetryableErrorSet.RETRYABLE:
-            break  # Don't retry non-retryable errors
-
-        logger.info(f"Retryable error, attempt {attempt + 1}/{max_attempts}: {result.message}")
-
-    return result
-```
 
 ### Component 6: manager.py (Orchestrator)
 
@@ -1280,6 +927,22 @@ class ToolManager:
                     print(f"      ⚠️  {deps_hint}")
 
         if dry_run:
+            print("\n" + "="*60)
+            print("DRY RUN MODE - Commands that would be executed:")
+            print("="*60)
+
+            for ecosystem, tools in plan.tools.items():
+                print(f"\n{ecosystem.upper()} ({len(tools)} tools):")
+                for tool in tools:
+                    cmd = tool.get('install_cmd', 'N/A')
+                    deps_ok = "✓" if tool.get("dependencies_ok", True) else "✗"
+
+                    print(f"  [{deps_ok}] {tool['name']}")
+                    print(f"      Command: {cmd}")
+                    deps_hint = tool.get("dependency_hint", "")
+                    if deps_hint:
+                        print(f"      ⚠️  {deps_hint}")
+
             print("\n" + "="*60)
             print("DRY RUN MODE - No actual installations will occur")
             print("="*60)
@@ -1638,7 +1301,7 @@ def _check_dependencies(self, tool: Dict) -> DependencyCheck:
     if ecosystem == "pip":
         # Prefer pipx for isolation
         if shutil.which("pipx"):
-            tool["installer_hint"] = "pipx"
+            return DependencyCheck(available=True, installer_hint="pipx")
         elif not shutil.which("pip3"):
             missing.append("pip3 (required for Python tools)")
 
@@ -1668,210 +1331,23 @@ def _is_high_risk(self, tool: Dict) -> bool:
 
 ## Error Handling
 
-### Structured Error Codes
+**See `assistant/tools/models.py` for canonical error handling:**
 
-```python
-class ErrorCode:
-    PERMISSION_DENIED = "permission_denied"
-    TIMEOUT = "timeout"
-    NOT_FOUND = "not_found"
-    INSTALL_FAILED = "install_failed"
-    DEPENDENCY_MISSING = "dependency_missing"
-    NETWORK_ERROR = "network_error"
-    NOT_IN_PATH = "not_in_path"
-    BROKEN = "broken"
+- `ErrorCode` enum - Structured error codes (PERMISSION_DENIED, TIMEOUT, NOT_FOUND, etc.)
+- `ToolStatus` enum - Tool states (INSTALLED, NOT_FOUND, OUTDATED, etc.)
+- `Result` dataclass - Operation results with success, code, message, stderr, hint, stage, context
+- `ToolInfo` dataclass - Tool detection results
+- `DependencyCheck` dataclass - Dependency checking results
+- `CriticalErrorSet` - Errors that stop batch operations
+- `RetryableErrorSet` - Errors that should be retried
 
-class ToolStatus:
-    INSTALLED = "installed"
-    NOT_FOUND = "not_found"
-    NOT_IN_PATH = "not_in_path"
-    PERMISSION_DENIED = "permission_denied"
-    BROKEN = "broken"
-    OUTDATED = "outdated"
-
-CRITICAL_ERRORS = {
-    ErrorCode.PERMISSION_DENIED,
-    ErrorCode.DEPENDENCY_MISSING,
-}
-
-RETRYABLE_ERRORS = {
-    ErrorCode.TIMEOUT,
-    ErrorCode.NETWORK_ERROR,
-}
-```
-
-### Result Objects
-
-```python
-@dataclass
-class Result:
-    success: bool
-    code: Optional[str] = None
-    message: str = ""
-    stderr: str = ""
-    hint: str = ""
-
-@dataclass
-class ToolInfo:
-    name: str
-    status: str
-    version: str = "unknown"
-    path: str = ""
-    error: str = ""
-    hint: str = ""
-
-@dataclass
-class DependencyCheck:
-    available: bool
-    missing: List[str] = field(default_factory=list)
-    hint: str = ""
-    installer_hint: str = ""
-```
-
-### Detection Error Handling
-
-```python
-def detect_tool(metadata: Dict) -> ToolInfo:
-    try:
-        path = shutil.which(metadata["name"])
-        if not path:
-            return ToolInfo(
-                name=metadata["name"],
-                status=ToolStatus.NOT_FOUND
-            )
-
-        version = get_tool_version(metadata["version_flags"])
-        return ToolInfo(
-            name=metadata["name"],
-            status=ToolStatus.INSTALLED,
-            version=version,
-            path=path
-        )
-
-    except PermissionError:
-        return ToolInfo(
-            name=metadata["name"],
-            status=ToolStatus.PERMISSION_DENIED,
-            error="Permission denied",
-            hint="Check file permissions"
-        )
-
-    except subprocess.TimeoutExpired:
-        return ToolInfo(
-            name=metadata["name"],
-            status=ToolStatus.INSTALLED,
-            version="timeout",
-            warning="Tool unresponsive"
-        )
-```
-
-### Installation Error Handling
-
-```python
-def install_apt(tool: Dict, sudo: bool) -> Result:
-    cmd = f"{'sudo ' if sudo else ''}apt install -y {tool['name']}"
-
-    try:
-        result = subprocess.run(cmd.split(), capture_output=True, timeout=300)
-
-        if result.returncode != 0:
-            return Result(
-                success=False,
-                code=ErrorCode.INSTALL_FAILED,
-                message="Install failed",
-                stderr=result.stderr.decode(),
-                hint="Check apt repository or run 'apt update'"
-            )
-
-        return Result(success=True)
-
-    except subprocess.TimeoutExpired:
-        return Result(
-            success=False,
-            code=ErrorCode.TIMEOUT,
-            message="Installation timeout",
-            hint="Network issue or large package"
-        )
-
-    except PermissionError:
-        return Result(
-            success=False,
-            code=ErrorCode.PERMISSION_DENIED,
-            message="Permission denied",
-            hint="Use sudo or run as root"
-        )
-```
-
-### Retry Strategy
-
-```python
-def install_with_retry(tool: Dict, max_attempts: int = 2) -> Result:
-    for attempt in range(max_attempts):
-        result = installer.install_tool(tool)
-
-        if result.success:
-            return result
-
-        if result.code not in RETRYABLE_ERRORS:
-            break  # Don't retry non-retryable errors
-
-    return result
-```
-
-### Batch Error Handling
-
-```python
-def install_batch(self, tools: List[Dict]):
-    results = {
-        "installed": [],
-        "failed": [],
-        "skipped": []
-    }
-
-    for tool in tools:
-        try:
-            # Check dependencies
-            deps = self._check_dependencies(tool)
-            if not deps.available:
-                results["skipped"].append({
-                    "tool": tool["name"],
-                    "reason": deps.hint
-                })
-                continue
-
-            # Install
-            result = install_with_retry(tool)
-
-            if result.success:
-                results["installed"].append(tool["name"])
-            else:
-                results["failed"].append({
-                    "tool": tool["name"],
-                    "code": result.code,
-                    "error": result.message,
-                    "hint": result.hint
-                })
-
-                # Stop on critical errors
-                if result.code in CRITICAL_ERRORS:
-                    self._report_critical_failure(result)
-                    return results
-
-        except Exception as e:
-            results["failed"].append({
-                "tool": tool["name"],
-                "error": f"Unexpected error: {str(e)}",
-                "hint": "Check logs for details"
-            })
-
-    return results
-```
-
-### Error Hierarchy
+**Error Handling Principles:**
 
 1. **Critical** → Stop batch, report immediately (permission, missing dependencies)
 2. **Warning** → Continue, log, show in summary (timeout, network error)
 3. **Info** → Note, don't affect outcome (tool not in PATH)
+
+All error handling in components uses these canonical models from `models.py`.
 
 ---
 
@@ -2129,18 +1605,18 @@ class ToolCapabilityLayer:
 
     def get_available_tools(self, capability: str) -> List[str]:
         """Get installed tools for a capability."""
-        all_tools = CAPABILITY_MAP.get(capability, [])
+        all_tools = CAPABILITY_MAP.get(capability, {}).keys()
         return [t for t in all_tools if self.manager.is_available(t)]
 
     def get_missing_tools(self, capability: str) -> List[str]:
         """Get missing tools for a capability."""
-        all_tools = CAPABILITY_MAP.get(capability, [])
+        all_tools = CAPABILITY_MAP.get(capability, {}).keys()
         return [t for t in all_tools if not self.manager.is_available(t)]
 
     def plan_tool_installation(self, capability: str) -> InstallPlan:
         """Create install plan for capability."""
         missing = self.get_missing_tools(capability)
-        return self.manager.create_install_plan(missing)
+        return self.manager.create_install_plan_for_tools(missing)
 ```
 
 ---
