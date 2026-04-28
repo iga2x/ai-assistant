@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ai-assistant"
 version = "0.1.0"
 authors = [
-    { name = "AI Assistant Developer", email = "dev@assistant.local" },
+    { name = "AI Assistant Developer", email = "dev@example.com" },
 ]
 description = "A clean, installable terminal AI assistant for PC tasks, coding, and security workflows."
 readme = "README.md"
