@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.panel import Panel
 from assistant.system.discovery import discover_system
 from assistant.ai.detector import detect_providers
-from assistant.tools.detector import detect_tools
+from assistant.tools.manager import ToolManager
 
 console = Console()
 
@@ -13,7 +13,8 @@ def status():
     """Show the current status of the assistant and its environment."""
     sys_info = discover_system()
     providers = detect_providers()
-    tools = detect_tools()
+    manager = ToolManager()
+    tools = manager.detect()
 
     # System Panel
     console.print(Panel(
@@ -38,14 +39,14 @@ def status():
     console.print(ai_table)
 
     # Tools Summary
-    installed_tools = [t for t in tools if t.installed]
+    installed_tools = [t for t in tools if t.is_available()]
     console.print(f"\n[bold]Tools Detected:[/bold] {len(installed_tools)} / {len(tools)} common tools found.")
     
     security_tools = [t for t in installed_tools if t.category in ["scanner", "recon"]]
     if security_tools:
         console.print(f"[bold green]✔[/bold green] Security tools ready: {', '.join(t.name for t in security_tools)}")
     
-    missing = [t.name for t in tools if not t.installed and t.category in ["scanner", "recon"]]
+    missing = [t.name for t in tools if not t.is_available() and t.category in ["scanner", "recon"]]
     if missing:
         console.print(f"[bold yellow]![/bold yellow] Recommended missing: {', '.join(missing)}")
 

@@ -27,7 +27,7 @@ A clean, installable terminal AI assistant that can help with PC tasks, coding, 
 
 ## Key Features
 - **Local-First AI**: Optimized for Ollama and LM Studio. Works offline via a robust mock fallback.
-- **Intelligent Planning**: Automatically breaks down complex requests (like "recon google.com") into actionable steps.
+- **Intelligent Planning**: Automatically breaks down complex requests (like "recon <target>") into actionable steps.
 - **Safety First**: Mandatory scope validation and user approval for all risky shell commands.
 - **Memory & Diffing**: Automatically parses `nmap` results and compares them with history to show changes.
 - **Plugin System**: Easily extend the assistant by dropping Python scripts into `~/.assistant/plugins/`.

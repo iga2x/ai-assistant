@@ -4,6 +4,12 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from assistant.utils.paths import CONFIG_FILE
 
+class IdentityConfig(BaseModel):
+    name: str = "AI Assistant"
+    persona: str = "A professional and efficient technical assistant specializing in system administration and security."
+    use_antigravity_branding: bool = False
+
+
 class AIConfig(BaseModel):
     mode: str = "local_first"
     ask_before_cloud: bool = True
@@ -18,7 +24,7 @@ class AIConfig(BaseModel):
 class ExecutionConfig(BaseModel):
     mode: str = "active" # active, learning
     show_raw_output: bool = False
-    save_all_outputs: bool = True
+    save_all_outputs: bool = False
     require_approval_for_security_tools: bool = True
 
 class SecurityConfig(BaseModel):
@@ -42,20 +48,48 @@ class PrivacyConfig(BaseModel):
         "api_keys", "passwords", "cookies", "tokens", "private_reports", "client_data"
     ]
 
+class NetworkConfig(BaseModel):
+    public_ip_providers: List[str] = ["https://api.ipify.org?format=json", "https://ifconfig.me/all.json"]
+    reachability_check_ip: str = "1.1.1.1" # Used to find local IP
+
 class DebugConfig(BaseModel):
     show_ai_reasoning: bool = False
     show_raw_ai_response: bool = False
     show_intent: bool = False
     show_plan: bool = False
 
+class TimeoutConfig(BaseModel):
+    """Centralized timeout configuration for various operations."""
+    default: int = 60  # Default timeout in seconds
+    ai_request: int = 90  # AI API request timeout
+    shell_command: int = 300  # Shell command execution (5 minutes for long scans)
+    web_request: int = 30  # HTTP/web requests
+    tool_detection: int = 10  # Tool version detection
+    nmap_scan: int = 300  # Nmap scan timeout (long scans)
+    # Tool-specific timeouts
+    tool: dict = Field(default_factory=lambda: {
+        "nmap": 300,
+        "nuclei": 180,
+        "sqlmap": 300,
+        "ffuf": 120,
+        "gobuster": 120,
+        "hydra": 180,
+        "john": 300,
+        "hashcat": 300,
+    })
+
 class AppConfig(BaseModel):
+    identity: IdentityConfig = Field(default_factory=IdentityConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
+
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    network: NetworkConfig = Field(default_factory=NetworkConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)
+    timeout: TimeoutConfig = Field(default_factory=TimeoutConfig)
 
 class ConfigManager:
     def __init__(self, config_path: Path = CONFIG_FILE):

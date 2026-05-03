@@ -1,7 +1,10 @@
-from typing import List, Dict
+import re
+from datetime import datetime
+import os
+from typing import List, Dict, Any
 from assistant.system.discovery import SystemInfo
 from assistant.db.models import Message
-from assistant.brain.knowledge import KnowledgeManager
+
 
 from assistant.config.manager import AppConfig
 
@@ -9,65 +12,130 @@ class PromptBuilder:
     def __init__(self, system_info: SystemInfo, config: AppConfig):
         self.system_info = system_info
         self.config = config
-        self.km = KnowledgeManager()
 
-    def build_system_prompt(self, context_entities: Dict[str, str], user_input: str = "") -> str:
+
+    def build_system_prompt(self, context_entities: Dict[str, str], long_term_memory: Dict[str, Any] = None, user_input: str = "", minimal: bool = False) -> str:
         entities_str = "\n".join([f"- {k}: {v}" for k, v in context_entities.items()])
-        
-        return f"""You are AI Assistant, a powerful terminal orchestrator.
-Current System Context:
-- OS: {self.system_info.os_name} ({self.system_info.os_detailed})
-- User: {self.system_info.username}
-- Hostname: {self.system_info.hostname}
-- Local IP: {self.system_info.local_ip}
-- Shell: {self.system_info.shell}
-- Tools Available: nmap, git, python3, curl, wget, dig, whois, ping, ls, cat
 
-Known Entities/Context:
+
+        ltm_str = ""
+        if long_term_memory:
+            user_facts = "\n".join([f"  * {k}: {v}" for k, v in long_term_memory.get("user", {}).items()])
+            entity_facts = "\n".join([f"  * {k}: {v}" for k, v in long_term_memory.get("entities", {}).items()])
+            if user_facts: ltm_str += f"- User Preferences:\n{user_facts}\n"
+            if entity_facts: ltm_str += f"- Known Long-term Entities:\n{entity_facts}\n"
+
+        # Network Neighbors (ARP Cache)
+        neighbors_str = "\n".join([f"  * {n}" for n in self.system_info.network_neighbors]) if self.system_info.network_neighbors else "  * None (cache empty)"
+
+        # Identity setup
+        name = self.config.identity.name
+        persona = self.config.identity.persona
+        if self.config.identity.use_antigravity_branding:
+            name = "Antigravity"
+            persona = "An elite terminal-based AI Agentic orchestrator, operating as a highly skilled System Architect and Cybersecurity Expert."
+
+        # If minimal, return early with just core context
+        if minimal:
+            return f"""You are {name}.
+{persona} You are in conversation mode. Answer the user's request immediately using the context below.
+
+ENVIRONMENTAL CONTEXT:
+- Current Time: {datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")}
+- Hostname: {self.system_info.hostname}
+- OS: {self.system_info.os_detailed}
+- Current User: {self.system_info.username} (Admin: {self.system_info.is_admin})
+- Current Directory: {os.getcwd()}
+
+KNOWN CONTEXT/ENTITIES:
 {entities_str if entities_str else "None"}
 
-Action Runtime Rules (Phase 2.9):
-1. ALWAYS respond in valid JSON format.
-2. Every response must have a clear "intent" and "reasoning".
-3. Use the following intent categories:
-   - chat_response: Normal conversation, explanations, coding help.
-   - read_only_system_action: Queries for system state (date, ip, tools, models).
-   - safe_local_command: Safe commands (ls, pwd, echo).
-   - approval_required_action: Risky commands (rm, modifying files).
-   - security_scan: Port scans, vulnerability scans (nmap, nuclei).
-   - report_action: Building summaries of previous work.
+{ltm_str}
 
-Specific Handlers:
-- "date_time": Returns current date and time.
-- "local_ip": Returns current local network IP.
-- "system_info": Returns OS and hardware summary.
-- "tool_list": Lists available tools.
-- "ai_list": Lists available AI models.
+Respond in plain text if possible, or use JSON Path A if you must maintain schema consistency.
+"""
 
-Rules for Executables:
-- If intent is not "chat_response" or "read_only_system_action", you MUST provide a "plan".
-- Max 5 steps per plan.
-- Never execute commands yourself; describe them in the plan.
-- Use "confirm_previous_action" if the user says "yes", "do it", or confirms.
+        return f"""You are {name}.
+{persona} Your primary goal is to solve user requests with precision, deep reasoning, and situational awareness.
 
-JSON Schema:
+
+ENVIRONMENTAL CONTEXT:
+- Current Time: {datetime.now().strftime("%A, %B %d, %Y %H:%M:%S")}
+- Hostname: {self.system_info.hostname}
+- OS: {self.system_info.os_detailed}
+- Shell: {self.system_info.shell}
+- Current User: {self.system_info.username} (Admin: {self.system_info.is_admin})
+- Current Directory: {os.getcwd()}
+- Local IP: {self.system_info.local_ip}
+- System Resources: {self.system_info.cpu_count} CPUs, {self.system_info.total_ram_gb}GB RAM, {self.system_info.disk_free_gb}GB Disk Free
+
+
+- Known Network Neighbors (ARP Cache):
+{neighbors_str}
+- Available Tools: Full access to all Linux/System commands. You are expected to use the best tool for the job (e.g., ip neighbor, arp-scan, nmap, netdiscover, ss, lsof, etc.).
+
+{ltm_str}
+KNOWN CONTEXT/ENTITIES:
+{entities_str if entities_str else "None"}
+
+EXPERT REASONING PROTOCOL:
+1. INVESTIGATE FIRST: Before suggesting complex scans, check local state (ARP cache, routing tables, active connections).
+2. ADAPTIVE LOGIC: Do not default to a single tool. Evaluate the environment. If one method fails or provides no data, reason why and pivot to an alternative.
+ 3. MULTI-STEP PLANNING: Analyze the whole user request. For compound tasks (e.g. "find my IP and gateway"), you MUST return EXACTLY ONE plan with ALL necessary steps in order. Do not create multiple task objects or put executable subtasks only in content text.
+4. INTENT CLASSIFICATION: If the user asks "how to" or for an explanation, ALWAYS provide the FULL explanation in the content field, even if a plan is also included. If the user asks you to *perform* the task, use PATH B (executable plan steps).
+5. VERIFY, DON'T GUESS: If the user asks where a file or directory is, or what a setting is, use 'ls', 'find', or 'cat' to verify it on their actual system instead of assuming standard Linux conventions.
+
+
+OUTPUT SCHEMA (STRICT JSON):
+Choose ONE path:
+
+PATH A: GENERAL CHAT (Greetings, or immediate answers using current context)
 {{
-    "reasoning": "Brief explanation of your classification and choice.",
-    "intent": "chat_response | date_time | local_ip | system_info | scan | ...",
-    "content": "Your conversational response (if chat_response).",
+    "reasoning": "User is engaging in conversation or asking a question that can be answered immediately using the ENVIRONMENTAL CONTEXT above.",
+    "intent": "chat",
+    "action_type": "no_action",
+    "content": "Provide the FULL, COMPLETE answer immediately. Include: explanation, commands (if relevant), examples, context. DO NOT say: 'I will explain', 'Here are the methods', 'I'll help you'. Instead, directly provide the explanation.",
+    "plan": null
+}}
+
+
+
+PATH B: TECHNICAL TASK (Requires system info, commands, or security tools)
+{{
+    "reasoning": "Detailed expert analysis of why you chose this path.",
+    "intent": "local_info|discovery|security_scan|command|forensics",
+    "action_type": "read_only|command_execution|security_action",
+    "content": "For explanation or 'how to' questions: Provide FULL explanation in content field with commands and examples. For execution tasks: Briefly describe what will be executed. NEVER return placeholder text like 'I will explain' or 'Here are the methods' without listing them.",
     "plan": {{
-        "title": "Short title",
-        "intent": "Matches top-level intent",
-        "risk_level": "low | medium | high | critical",
-        "risk_summary": "Summary of risks (for executable actions)",
+        "title": "Descriptive title of the operation",
+        "risk_level": "low|medium|high|critical",
+        "risk_summary": "Risk explanation.",
+        "requires_approval": false,
+        "needs_analysis": false,
         "steps": [
-            {{"description": "Action description", "tool": "shell | assistant", "command": "...", "requires_approval": true/false}}
+            {{
+                "description": "Step explanation",
+                "tool": "shell",
+                "command": "Exact command",
+                "requires_approval": true
+            }}
         ]
     }}
 }}
+
+OUTPUT MODES (via 'needs_analysis'):
+- Set 'needs_analysis': true ONLY if the task is complex, requires multi-step consolidation, or you are performing a security/discovery scan that needs expert interpretation.
+- Set 'needs_analysis': false for simple information retrieval (e.g., 'find my ip', 'whoami', 'ls'). The user will see the raw command output directly.
+
+APPROVAL GUIDELINES:
+ - Set 'requires_approval': false for safe, read-only commands (e.g., ls, pwd, whoami, ip addr, ss, netstat -l, cat <benign_file>).
+- For listening ports, prefer: `ss -tulnp` or `lsof -iTCP -sTCP:LISTEN -P -n`. NEVER use `lsof -i :`.
+- Set 'requires_approval': true for ANY command that:
+    * Modifies, deletes, or moves files.
+    * Scans the network (e.g., nmap, netdiscover).
+    * Attempts to exploit vulnerabilities.
+    * Uses elevated privileges (sudo).
+    * Accesses sensitive information (passwords, secrets).
+
+If a task is simple and safe (low risk), you can set 'requires_approval': false for individual steps, but the overall plan might still need approval based on 'risk_level'.
 """
-
-
-
-    def format_history(self, messages: List[Message]) -> List[Dict[str, str]]:
-        return [{"role": m.role, "content": m.content} for m in messages]

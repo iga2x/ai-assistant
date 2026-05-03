@@ -27,7 +27,10 @@ class AIRuntime:
 
     async def refresh(self):
         """Re-scan services and resolve the active model."""
-        self.providers = detect_providers()
+        from assistant.memory import MemoryManager
+        memory = MemoryManager()
+        secrets = memory.get_all_facts().get("secrets", {})
+        self.providers = detect_providers(secrets)
         await self.resolve()
 
     async def resolve(self):
@@ -90,15 +93,49 @@ class AIRuntime:
             return
 
     def _resolve_cloud(self):
-        # Just use the first available cloud provider for now
-        cloud_providers = [p for p in self.providers if p.type == "cloud" and p.available]
-        if cloud_providers:
-            provider = cloud_providers[0]
+        """Dynamic resolution for cloud providers with fallbacks."""
+        # 1. Try to use configured default cloud provider
+        config_provider = self.config.ai.default_cloud_provider
+        provider = next((p for p in self.providers if p.name == config_provider and p.available), None)
+        
+        # 2. Fallback to any available cloud provider
+        if not provider:
+            provider = next((p for p in self.providers if p.type == "cloud" and p.available), None)
+            
+        if provider:
+            # Determine model
+            model = self.config.ai.default_cloud_model
+            source = "config"
+            
+            # If auto-select is enabled and config model is missing or not in available models
+            if self.config.ai.auto_select_model:
+                if not model or (provider.models and model not in provider.models):
+                    if provider.models:
+                        # Prefer 'coding' or 'pro' or 'large' models if they exist in the names
+                        coding_models = [m for m in provider.models if "coding" in m.lower() or "code" in m.lower()]
+                        if coding_models:
+                            model = coding_models[0]
+                        else:
+                            model = provider.models[0]
+                        source = "auto_detected"
+            
+            # Emergency fallback if still no model string
+            if not model:
+                defaults = {
+                    "openai": "gpt-4o-mini", 
+                    "groq": "llama-3.1-70b-versatile", 
+                    "openrouter": "google/gemini-flash-1.5",
+                    "zai_coding": "codegeex-4"
+                }
+                model = defaults.get(provider.name, "default")
+                source = "fallback"
+
             self.state = RuntimeAIState(
                 provider=provider.name,
-                model=self.config.ai.default_cloud_model,
+                model=model,
                 available=True,
-                source="config"
+                models=provider.models,
+                source=source
             )
 
     async def _get_ollama_running_models(self, endpoint: str) -> List[str]:

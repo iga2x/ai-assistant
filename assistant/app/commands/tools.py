@@ -1,7 +1,7 @@
 import click
 from rich.console import Console
 from rich.table import Table
-from assistant.tools.detector import detect_tools
+from assistant.tools.manager import ToolManager
 
 console = Console()
 
@@ -21,7 +21,8 @@ def tools_list():
     _do_tools_list()
 
 def _do_tools_list():
-    tools = detect_tools()
+    manager = ToolManager()
+    tools = manager.detect()
     table = Table(title="Tool Detection Results")
     table.add_column("Tool", style="cyan")
     table.add_column("Status", style="magenta")
@@ -30,6 +31,7 @@ def _do_tools_list():
     table.add_column("Risk", style="red")
     
     for t in tools:
-        status_str = "[green]Installed[/green]" if t.installed else "[red]Missing[/red]"
-        table.add_row(t.name, status_str, t.version, t.category, t.risk_level)
+        status_str = "[green]Installed[/green]" if t.is_available() else "[red]Missing[/red]"
+        # risk_level is not in ToolInfo yet, but we can show the category
+        table.add_row(t.name, status_str, t.version, t.category, "N/A")
     console.print(table)

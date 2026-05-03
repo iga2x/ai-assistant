@@ -24,6 +24,7 @@ class SystemInfo(BaseModel):
     terminal: str
     local_ip: str
     interfaces: List[str] = []
+    network_neighbors: List[str] = []
 
 def get_shell_info() -> Dict[str, str]:
     """Detect the current shell and terminal."""
@@ -36,20 +37,20 @@ def get_shell_info() -> Dict[str, str]:
         "terminal": terminal
     }
 
-def get_local_ip() -> str:
+def get_local_ip(check_ip: str = "1.1.1.1") -> str:
     """Get the local IP address."""
     try:
         # This doesn't actually connect, just gets the interface IP
         import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
+        s.connect((check_ip, 80))
         ip = s.getsockname()[0]
         s.close()
         return ip
     except Exception:
         return "127.0.0.1"
 
-def get_network_info() -> Dict[str, Any]:
+def get_network_info(check_ip: str = "1.1.1.1") -> Dict[str, Any]:
     """Get network interfaces and primary IP."""
     interfaces = []
     try:
@@ -61,15 +62,41 @@ def get_network_info() -> Dict[str, Any]:
     
     return {
         "interfaces": interfaces,
-        "primary_ip": get_local_ip()
+        "primary_ip": get_local_ip(check_ip)
     }
 
-def discover_system() -> SystemInfo:
+def get_network_neighbors() -> List[str]:
+    """Get active neighbors from ARP cache/ip neighbor."""
+    neighbors = []
+    try:
+        # Try 'ip neighbor' first (modern linux)
+        import subprocess
+        result = subprocess.run(["ip", "neighbor", "show"], capture_output=True, text=True, timeout=1.0)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "REACHABLE" in line or "STALE" in line:
+                    neighbors.append(line.strip())
+        
+        # Fallback to /proc/net/arp if needed
+        if not neighbors and os.path.exists("/proc/net/arp"):
+            with open("/proc/net/arp", "r") as f:
+                lines = f.readlines()[1:] # Skip header
+                for line in lines:
+                    parts = line.split()
+                    if len(parts) > 0:
+                        neighbors.append(f"IP: {parts[0]}, HW: {parts[3]}")
+    except Exception:
+        pass
+    return neighbors[:10] # Limit to top 10 to avoid bloat
+
+def discover_system(config: Any = None) -> SystemInfo:
     """Gather complete system information."""
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
     shell_info = get_shell_info()
-    net_info = get_network_info()
+    
+    check_ip = config.network.reachability_check_ip if config and hasattr(config, "network") else "1.1.1.1"
+    net_info = get_network_info(check_ip)
     
     return SystemInfo(
         os_name=platform.system(),
@@ -86,5 +113,6 @@ def discover_system() -> SystemInfo:
         shell_path=shell_info["shell_path"],
         terminal=shell_info["terminal"],
         local_ip=net_info["primary_ip"],
-        interfaces=net_info["interfaces"]
+        interfaces=net_info["interfaces"],
+        network_neighbors=get_network_neighbors()
     )

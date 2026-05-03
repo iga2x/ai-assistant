@@ -9,7 +9,6 @@ from assistant.config.manager import ConfigManager
 from assistant.db.database import DatabaseManager
 from assistant.system.discovery import discover_system
 from assistant.ai.detector import detect_providers
-from assistant.tools.detector import detect_tools
 
 console = Console()
 

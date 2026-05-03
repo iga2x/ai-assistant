@@ -15,6 +15,8 @@ class InputNormalizer:
             r'\bpingg\b': 'ping',
             r'\bifconfigg\b': 'ifconfig',
             r'\bnmapp\b': 'nmap',
+            r'\bwaht\b': 'what',
+            r'\bfidn\b': 'find',
         }
 
     def normalize(self, text: str) -> str:

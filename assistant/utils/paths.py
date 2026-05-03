@@ -22,6 +22,8 @@ PLUGINS_DIR = BASE_DIR / "plugins"
 KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 CACHE_DIR = BASE_DIR / "cache"
 SYSTEM_PROFILE_PATH = BASE_DIR / "system_profile.json"
+MEMORY_JSON_PATH = BASE_DIR / "memory.json"
+MEMORY_DB_PATH = BASE_DIR / "memory.db"
 CONFIG_FILE = BASE_DIR / "config.yaml"
 
 def ensure_dirs():

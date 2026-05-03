@@ -8,11 +8,13 @@ def test_config_exists():
 
 def test_db_connect():
     db = DatabaseManager()
-    assert db.session is not None
-    # Test a simple query
-    from assistant.db.models import Conversation
-    count = db.session.query(Conversation).count()
-    assert count >= 0
+    # Test that we can get a session
+    with db.get_session() as session:
+        assert session is not None
+        # Test a simple query
+        from assistant.db.models import Conversation
+        count = session.query(Conversation).count()
+        assert count >= 0
 
 def test_logs_writable():
     assert os.access(LOGS_DIR, os.W_OK)

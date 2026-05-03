@@ -1,81 +1,71 @@
-from assistant.context.normalizer import InputNormalizer
-from assistant.context.resolver import ContextResolver
-from assistant.context.entities import EntityStore
-from assistant.brain.prompt_builder import PromptBuilder
-from assistant.brain.response_parser import ResponseParser
-from assistant.ai.router import AIRouter
-from assistant.tasks.planner import Planner
-from assistant.db.services import ConversationService
-from assistant.actions.router import ActionRouter
-from assistant.tools.runner import ToolRunner
-from assistant.tasks.task_types import Plan, PlanStep
+from assistant.app.terminal.orchestrator import Orchestrator
+from types import SimpleNamespace
+import time
+
 
 class ChatPipeline:
+    """The ChatPipeline now acts as a thin wrapper around the Orchestrator.
+    
+    This maintains backward compatibility with the terminal CLI while
+    enforcing the new layered architecture.
+    """
     def __init__(self, db_manager, config_manager, sys_info):
         self.db = db_manager
         self.config_manager = config_manager
-        self.config = config_manager.config
         self.sys_info = sys_info
         
-        self.normalizer = InputNormalizer()
-        self.entity_store = EntityStore(self.db)
-        self.context_resolver = ContextResolver(self.entity_store)
-        self.prompt_builder = PromptBuilder(self.sys_info, self.config)
-        self.router = AIRouter(self.config_manager)
-        self.planner = Planner(self.db, self.sys_info)
-        self.conv_service = ConversationService(self.db.session)
-        
-        self.tool_runner = ToolRunner()
-        self.action_router = ActionRouter(self.sys_info, self.tool_runner)
+        # Phase 5: Delegating to Orchestrator
+        self.orchestrator = Orchestrator(db_manager, config_manager, sys_info)
+
+    @property
+    def entity_store(self):
+        """Access to memory entities for the terminal UI."""
+        return self.orchestrator.memory.entities
+
+    @property
+    def router(self):
+        """Access to the AI router for backward compatibility."""
+        return self.orchestrator.ai_router
+
+    @property
+    def memory(self):
+        """Access to memory manager for backward compatibility."""
+        return self.orchestrator.memory
+
+    @property
+    def planner(self):
+        """Access to planner for backward compatibility."""
+        return self.orchestrator.planner
+
+    @property
+    def prompt_builder(self):
+        """Access to prompt builder for backward compatibility."""
+        return self.orchestrator.prompt_builder
+
+
 
     async def process(self, user_input: str, conversation_id: int):
-        # 1. Normalize
-        normalized = self.normalizer.normalize(user_input)
+        """Processes input by classifying it and routing to the appropriate handler."""
+        start_time = time.time()
+        # 1. ORCHESTRATOR PATH (Unified AI Call)
+        # Phase 2.5: Removed legacy `classify_intent` AI call to fix latency (was doing 2 AI calls per input)
+        # Orchestrator natively handles Chat (Path A) vs Task (Path B) in a single LLM request.
         
-        # 2. Resolve
-        resolved = self.context_resolver.resolve(normalized)
+        result = await self.orchestrator.run(user_input, conversation_id)
         
-        # 3. Build context-aware prompt
-        entities = self.entity_store.get_all()
-        system_prompt = self.prompt_builder.build_system_prompt(entities, resolved)
-        
-        # 4. Get History
-        history = self.conv_service.get_history(conversation_id)
-        
-        # 5. Build message list
-        messages = [{"role": "system", "content": system_prompt}]
-        for m in history:
-            messages.append({"role": m.role, "content": m.content})
-        messages.append({"role": "user", "content": resolved})
-        
-        # 6. AI Router (Get response)
-        raw_output = await self.router.chat_completion(messages)
+        # If the Orchestrator didn't produce an executable plan, it's natively treated as Chat.
+        return SimpleNamespace(
+            content=result.get("output", "I understand."),
+            plan=result["plan"],
+            reasoning=result.get("reasoning", ""),
+            action_request=result.get("action_request"),
+            latency=time.time() - start_time
+        )
 
-        # 6.5. Parse AI response (extract content, handle edge cases)
-        parsed = ResponseParser.parse_ai_response(raw_output)
 
-        # 7. Planner (Create action request or plan) - use parsed content for plan generation
-        response = self.planner.create_plan(parsed.content, resolved)
-        
-        # 8. Action Execution (Handle read-only actions directly)
-        if response.action_request and response.action_request.action_type == "read_only_system_action":
-            action_result = await self.action_router.route(response.action_request)
-            if action_result.success:
-                # Update response content with action output
-                response.reasoning = response.action_request.reasoning
-                response.plan = Plan(
-                    title=f"Action Result: {response.action_request.intent}",
-                    intent=response.action_request.intent,
-                    risk_level="low",
-                    requires_approval=False,
-                    steps=[PlanStep(description=action_result.output, tool="assistant", requires_approval=False)]
-                )
 
-        # 9. Store (Original input and response)
-        self.conv_service.save_message(conversation_id, "user", user_input)
-        self.conv_service.save_message(conversation_id, "assistant", response.content)
 
-        # Store parsed data for debug access
-        response._parsed = parsed
 
-        return response
+    def substitute_context(self, command: str) -> str:
+        """Substitute context placeholders using the orchestrator's resolver."""
+        return self.orchestrator.context_resolver.resolve(command)

@@ -2,10 +2,20 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any
 from assistant.utils.paths import KNOWLEDGE_DIR
+from assistant.memory.secure_knowledge import secure_knowledge_manager
 
+# DEPRECATED: Use secure_knowledge_manager instead
 class KnowledgeManager:
+    """Deprecated: Use assistant.memory.secure_knowledge.SecureKnowledgeManager instead."""
+
     def __init__(self):
         self.knowledge_root = KNOWLEDGE_DIR
+        import warnings
+        warnings.warn(
+            "KnowledgeManager is deprecated. Use secure_knowledge_manager from assistant.memory.secure_knowledge instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
     def add_document(self, filename: str, content: str):
         doc_path = self.knowledge_root / filename

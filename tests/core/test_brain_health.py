@@ -12,7 +12,7 @@ def test_prompt_builder():
     from assistant.config.manager import AppConfig
     config = AppConfig()
     builder = PromptBuilder(sys_info, config)
-    prompt = builder.build_system_prompt({}, "Hello")
+    prompt = builder.build_system_prompt({}, user_input="Hello")
     assert "OS:" in prompt
     assert "Hello" not in prompt # System prompt shouldn't contain the user message usually
     assert "Assistant" in prompt

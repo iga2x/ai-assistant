@@ -6,7 +6,7 @@ from assistant.tasks.task_types import (
     NON_EXECUTABLE_INTENTS, EXECUTABLE_INTENTS,
     READ_ONLY_INTENTS, CONFIRMATION_INTENTS
 )
-from assistant.actions.schemas import ActionRequest
+from assistant.ai.schemas import ActionRequest
 
 class Planner:
     def __init__(self, db: DatabaseManager, system_info: Optional[Any] = None):
@@ -15,59 +15,112 @@ class Planner:
 
     def create_plan(self, ai_output: str, user_input: str) -> PlanResponse:
         """
-        Converts AI output into a PlanResponse.
-        Following Phase 3 rules: Chat vs Action Routing.
+        Converts AI output into a PlanResponse using unified schemas.
         """
-        try:
-            # Try to parse as JSON
-            data = json.loads(ai_output)
-            
-            # 1. Classification & Routing
-            intent = data.get("intent", data.get("plan", {}).get("intent", "chat_only"))
-            
-            # Determine Action Type
-            action_type = "chat_response"
-            if intent in READ_ONLY_INTENTS:
-                action_type = "read_only_system_action"
-            elif intent in EXECUTABLE_INTENTS:
-                action_type = "approval_required_action"
-            elif intent in CONFIRMATION_INTENTS:
-                action_type = "confirmation_action"
+        from assistant.ai.schemas import validate_ai_response, ActionType
+        from assistant.tasks.task_types import READ_ONLY_INTENTS, NON_EXECUTABLE_INTENTS, CONFIRMATION_INTENTS
 
-            # Create ActionRequest
-            action_request = ActionRequest(
-                action_type=action_type,
-                intent=intent,
-                params=data,
-                reasoning=data.get("reasoning", "")
+
+        # Validate and parse using unified schemas
+        validated = validate_ai_response(ai_output)
+        res = validated.response
+
+        # Phase 6.4: Defensive flattening of non-standard 'tasks' list
+        # If the AI returned a list of tasks instead of a single plan, flatten them.
+        try:
+            data = json.loads(ai_output)
+            if "tasks" in data and isinstance(data["tasks"], list) and not res.plan:
+                from assistant.ai.schemas import Plan as SchemaPlan
+                all_steps = []
+                combined_title = "Combined Tasks"
+                for t in data["tasks"]:
+                    if "plan" in t and "steps" in t["plan"]:
+                        all_steps.extend(t["plan"]["steps"])
+                        if "title" in t["plan"] and combined_title == "Combined Tasks":
+                            combined_title = t["plan"]["title"]
+                
+                if all_steps:
+                    res.plan = SchemaPlan(
+                        title=combined_title,
+                        steps=all_steps
+                    )
+        except:
+            pass
+
+        # Create ActionRequest for backward compatibility with executor
+        action_request = ActionRequest(
+            action_type=res.action_type or ActionType.NO_ACTION,
+            intent=res.intent or "unknown",
+            target_class=res.target_class or "none",
+            params=res.model_dump(),
+            reasoning=res.reasoning or "AI provided a technical response."
+        )
+
+
+        # 1. Read-only handlers - DO NOT RETURN EARLY IF PLAN EXISTS
+        # We want to execute read-only commands (like 'ls' or 'ip addr')
+        if not res.plan:
+            if res.action_type in [ActionType.READ_ONLY_LOCAL, ActionType.BENIGN_WEB_LOOKUP] or res.intent in READ_ONLY_INTENTS:
+                return PlanResponse(
+                    reasoning=res.reasoning,
+                    content_text=res.content,
+                    action_request=action_request,
+                    plan=None
+                )
+
+
+        # 2. Chat / No Action
+        if res.action_type == ActionType.NO_ACTION or res.intent in NON_EXECUTABLE_INTENTS:
+            return PlanResponse(
+                reasoning=res.reasoning,
+                content_text=res.content,
+                action_request=action_request,
+                plan=None
             )
 
-            # If it's a direct chat or non-executable, return immediately
-            if intent in NON_EXECUTABLE_INTENTS:
-                return self._create_chat_response(data, ai_output, action_request)
 
-            # If it's a read-only intent, return with action_request
-            if intent in READ_ONLY_INTENTS:
-                return PlanResponse(
-                    reasoning=action_request.reasoning,
-                    action_request=action_request,
-                    plan=None # Will be handled by ActionRouter
-                )
-            
-            # Confirmation Handler
-            if intent in CONFIRMATION_INTENTS:
-                return self._handle_confirmation(data, user_input, action_request)
-            
-            # If it's an executable intent, create a real plan
-            if intent in EXECUTABLE_INTENTS:
-                return self._create_executable_plan(data, action_request)
-            
-            # Default fallback for unknown intents
-            return self._create_chat_response(data, ai_output, action_request)
+        # 3. Confirmation Handler
+        if res.intent in CONFIRMATION_INTENTS:
+            return self._handle_confirmation(res.model_dump(), user_input, action_request)
 
-        except Exception:
-            # Fallback for non-JSON or malformed responses
+        # 4. Executable actions (or any action with a plan)
+        if res.plan:
+            return self._create_executable_plan_from_schema(res.plan, action_request)
+        
+        if res.action_type in [ActionType.SECURITY_SCAN, ActionType.COMMAND_EXECUTION, ActionType.FILE_WRITE, ActionType.DESTRUCTIVE_ACTION]:
+            # Fallback if executable but no plan provided in schema (legacy or malformed)
             return self._create_fallback_response(ai_output)
+
+
+        # Default fallback
+        return PlanResponse(
+            reasoning=res.reasoning,
+            content_text=res.content,
+            action_request=action_request,
+            plan=None
+        )
+
+
+
+    def _create_executable_plan_from_schema(self, plan_schema: Any, action_request: ActionRequest) -> PlanResponse:
+        """Helper to convert Pydantic Plan schema to Task PlanResponse."""
+        plan = Plan(
+            title=plan_schema.title,
+            intent=plan_schema.intent,
+            risk_level=plan_schema.risk_level,
+            risk_summary=plan_schema.risk_summary or "Action requires execution.",
+            requires_approval=plan_schema.requires_approval,
+            steps=[
+                PlanStep(
+                    description=s.description,
+                    tool=s.tool,
+                    command=s.command,
+                    requires_approval=s.requires_approval
+                ) for s in plan_schema.steps[:10]
+            ]
+        )
+        return PlanResponse(reasoning=action_request.reasoning, plan=plan, action_request=action_request)
+
 
     def _handle_confirmation(self, data: Dict, user_input: str, action_request: ActionRequest) -> PlanResponse:
         """Handle 'yes' or 'run it' by mapping to a confirmation intent."""
@@ -80,59 +133,8 @@ class Planner:
         )
         return PlanResponse(reasoning=action_request.reasoning, plan=plan, action_request=action_request)
 
-    def _create_chat_response(self, data: Dict, raw_text: str, action_request: ActionRequest) -> PlanResponse:
-        reasoning = data.get("reasoning", "AI provided a direct response.")
-        
-        # Priority 1: Direct 'content' field
-        content = data.get("content")
-        
-        # Priority 2: Description of the first step in the plan
-        if not content:
-            plan_data = data.get("plan", data)
-            steps = plan_data.get("steps", [])
-            if steps:
-                content = steps[0].get("description")
-        
-        # Priority 3: Fallback to raw text
-        if not content:
-            if raw_text.strip().startswith("{"):
-                 content = "AI response was structured but lacked clear content."
-            else:
-                 content = raw_text
-        
-        plan = Plan(
-            title="Assistant Response",
-            intent=action_request.intent,
-            risk_level="low",
-            requires_approval=False,
-            steps=[PlanStep(description=content, tool="assistant", requires_approval=False)]
-        )
-        return PlanResponse(reasoning=reasoning, plan=plan, action_request=action_request)
-
-    def _create_executable_plan(self, data: Dict, action_request: ActionRequest) -> PlanResponse:
-        plan_data = data.get("plan", data)
-        
-        # Validate steps
-        steps_raw = plan_data.get("steps", [])
-        if not steps_raw:
-            return self._create_fallback_response(json.dumps(data))
-            
-        plan = Plan(
-            title=plan_data.get("title", "Action Plan"),
-            intent=plan_data.get("intent", "pc_task"),
-            risk_level=plan_data.get("risk_level", "medium"),
-            risk_summary=plan_data.get("risk_summary", "This action modifies system state or runs external tools."),
-            requires_approval=True,
-            steps=[
-                PlanStep(
-                    description=s.get("description"),
-                    tool=s.get("tool", "shell"),
-                    command=s.get("command", ""),
-                    requires_approval=s.get("requires_approval", True)
-                ) for s in steps_raw[:5]
-            ]
-        )
-        return PlanResponse(reasoning=action_request.reasoning, plan=plan, action_request=action_request)
+    # _create_chat_response() REMOVED — Phase 4 cleanup.
+    # Superseded by _create_executable_plan_from_schema() + PlanResponse.content property.
 
     def _create_fallback_response(self, raw_text: str) -> PlanResponse:
         return PlanResponse(
@@ -147,19 +149,6 @@ class Planner:
         )
 
     def save_plan(self, plan: Plan) -> int:
-        from assistant.db.models import Task, TaskStep
-        task = Task(description=plan.title, status="pending")
-        self.db.session.add(task)
-        self.db.session.commit()
-        
-        for i, step in enumerate(plan.steps):
-            db_step = TaskStep(
-                task_id=task.id,
-                description=step.description,
-                order=i,
-                status="pending",
-                command=step.command
-            )
-            self.db.session.add(db_step)
-        self.db.session.commit()
-        return task.id
+        """Save a plan to the database using the unified manager."""
+        return self.db.save_task_plan(plan.title, plan.steps)
+

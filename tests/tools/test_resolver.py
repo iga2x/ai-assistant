@@ -14,8 +14,8 @@ def test_resolve_normal_tool():
 def test_resolve_alias():
     """Test resolving aliased tool name."""
     resolver = Resolver()
-    assert resolver.resolve("netcat") == "nc"
-    assert resolver.resolve("ncat") == "nc"
+    assert resolver.resolve("zaproxy") == "zap"
+    assert resolver.resolve("volatility") == "volatility3"
 
 
 def test_resolve_deprecated_with_replacement():
@@ -65,5 +65,5 @@ def test_get_replacement():
 def test_case_insensitive_resolution():
     """Test case-insensitive name resolution."""
     resolver = Resolver()
-    assert resolver.resolve("NETCAT") == "nc"
-    assert resolver.resolve("SubJack") == "subzy"
+    assert resolver.resolve("ZAPROXY") == "zap"
+    assert resolver.resolve("Subzy") == "subzy"

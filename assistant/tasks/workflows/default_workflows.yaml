@@ -1,0 +1,126 @@
+workflows:
+  bug_bounty_recon:
+    description: "Comprehensive bug bounty reconnaissance workflow"
+    steps:
+      - name: "subdomain_enumeration"
+        description: "Find all subdomains using subfinder"
+        tool: "shell"
+        command: "subfinder -d {target} -silent"
+        output_var: "subdomains"
+
+      - name: "port_scanning"
+        description: "Scan all subdomains for open ports"
+        tool: "shell"
+        command: "nmap -p- --min-rate=1000 {subdomains}"
+        output_var: "open_ports"
+        input_var: "subdomains"
+
+      - name: "vulnerability_scan"
+        description: "Scan for vulnerabilities using nuclei"
+        tool: "shell"
+        command: "nuclei -u {subdomains} -t 50 -o nuclei_output.txt"
+        output_var: "vulns"
+        input_var: "subdomains"
+
+      - name: "directory_fuzzing"
+        description: "Fuzz directories on targets"
+        tool: "shell"
+        command: "ffuf -w /usr/share/wordlists/dirb/common.txt -u http://{target}/FUZZ -o ffuf_results.txt"
+        requires_approval: true
+
+      - name: "generate_report"
+        description: "Generate recon report"
+        tool: "assistant"
+        command: "Report generated with subdomains, ports, vulnerabilities, and fuzzing results"
+
+  basic_pentest:
+    description: "Basic penetration testing workflow"
+    steps:
+      - name: "host_discovery"
+        description: "Discover hosts on the network"
+        tool: "nmap"
+        command: "nmap -sn {target}/24"
+
+      - name: "port_scan"
+        description: "Full port scan on discovered hosts"
+        tool: "nmap"
+        command: "nmap -p- -sV -sC {target}"
+        output_var: "scan_results"
+
+      - name: "web_scan"
+        description: "Scan web applications for vulnerabilities"
+        tool: "shell"
+        command: "nuclei -u http://{target} -t 20"
+        requires_approval: true
+
+      - name: "service_enumeration"
+        description: "Enumerate specific services if found"
+        tool: "shell"
+        command: "enum4linux -a {target}"
+        requires_approval: true
+
+  wifi_recon:
+    description: "WiFi reconnaissance and attack workflow"
+    steps:
+      - name: "enable_monitor"
+        description: "Enable monitor mode on wireless interface"
+        tool: "shell"
+        command: "nmcli radio wifi on && sudo airmon-ng start wlan0"
+        requires_approval: true
+
+      - name: "scan_networks"
+        description: "Scan for available WiFi networks"
+        tool: "wifi"
+        command: "scan"
+        output_var: "networks"
+
+      - name: "analyze_security"
+        description: "Analyze WiFi security types"
+        tool: "assistant"
+        command: "Reviewing network security configurations from scan results"
+
+      - name: "select_target"
+        description: "Select target network for further analysis"
+        tool: "assistant"
+        command: "Select target BSSID from scan results"
+        interactive: true
+
+  docker_recon:
+    description: "Docker container reconnaissance"
+    steps:
+      - name: "list_containers"
+        description: "List all running containers"
+        tool: "shell"
+        command: "docker ps -a"
+        output_var: "containers"
+
+      - name: "inspect_images"
+        description: "Inspect container images for vulnerabilities"
+        tool: "shell"
+        command: "docker images"
+        output_var: "images"
+
+      - name: "scan_container_ports"
+        description: "Scan exposed ports from containers"
+        tool: "shell"
+        command: "nmap -p- $(docker port $(docker ps -q) | cut -d: -f2)"
+        requires_approval: true
+
+  quick_recon:
+    description: "Quick reconnaissance for single target"
+    steps:
+      - name: "basic_scan"
+        description: "Quick nmap scan"
+        tool: "nmap"
+        command: "nmap -F -sV {target}"
+
+      - name: "dns_lookup"
+        description: "DNS information gathering"
+        tool: "shell"
+        command: "dig +short A {target} ANY"
+        output_var: "dns_info"
+
+      - name: "whois_info"
+        description: "Get whois information"
+        tool: "shell"
+        command: "whois {target}"

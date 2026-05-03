@@ -1,66 +1,83 @@
 import re
-from typing import Optional
-from assistant.context.entities import EntityStore
+import os
+from typing import Optional, Any
 
 class ContextResolver:
-    def __init__(self, store: EntityStore):
+    def __init__(self, store: Any):
         self.store = store
 
     def resolve(self, text: str) -> str:
-        """Resolve pronouns like 'it', 'that', 'same', 'again', 'there'."""
+        """Resolve pronouns like 'it', 'that', 'same', 'again', 'there', 'my machine'."""
         resolved = text.lower()
-        
+
+        # Try to resolve common targets
         target = self.store.get("last_target")
         ip = self.store.get("last_ip")
         domain = self.store.get("last_domain")
-        
-        # Mapping pronouns to their likely entities
-        pronoun_map = {
-            r'\bit\b': target,
-            r'\bthat\b': target,
-            r'\bsame\b': target,
-            r'\bthere\b': target or ip or domain,
-            r'\bagain\b': target,
-        }
 
-        for pattern, replacement in pronoun_map.items():
+        # Build a set of replacement values to check for cascading replacements
+        replacement_values = {v for v in [target, ip, domain, "localhost"] if v}
+
+        # Mapping pronouns and phrases to their likely entities
+        # ORDER MATTERS: Most specific patterns first to avoid double replacement
+        pronoun_map = [
+            (r'\b(?:the|that) same\b', f'{target} {target}'),  # "that same" -> "target.com target.com"
+            (r'\bthe previous result\b', target),
+            (r'\bmy ip\b', ip),
+            (r'\bthat ip\b', ip or target),
+            (r'\bthis host\b', target or ip or domain or "localhost"),
+            (r'\bmy machine\b', "localhost"),
+            (r'\bmy computer\b', "localhost"),
+            (r'\bthere\b', target or ip or domain),
+            (r'\bit\b', target),
+            (r'\bthat\b', target),  # Less specific, after "that ip"
+            (r'\bsame\b', target),  # Least specific, last
+            (r'\bagain\b', target),
+        ]
+
+        for pattern, replacement in pronoun_map:
             if replacement:
+                # Skip if the replacement value is already in the text
+                # This prevents cascading replacements
+                if replacement in replacement_values and replacement in resolved:
+                    # Check if the original text contains this specific pattern
+                    # If the pattern exists in the original text, we should still replace it
+                    if not re.search(pattern, text, re.IGNORECASE):
+                        continue
+
                 # Use regex to replace pronouns while preserving punctuation
-                resolved = re.sub(pattern, replacement, resolved)
+                # Use count=1 to replace only first occurrence per pattern
+                resolved = re.sub(pattern, replacement, resolved, count=1)
 
         return resolved
 
     def extract_entities(self, text: str):
-        """Simple regex extraction for IP and Domains with confidence levels."""
-        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-        domain_pattern = r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]\b'
-        
-        lower_text = text.lower()
-        is_explicit = any(word in lower_text for word in ["target", "host", "domain", "ip", "scan", "analyze"])
-        confidence = 0.9 if is_explicit else 0.6
+        """Extract and store entities from text (IPs, domains, file paths)."""
+        import ipaddress
 
-        # Update last_ip
-        ips = re.findall(ip_pattern, text)
-        if ips:
-            last_ip = ips[-1]
-            self.store.update("last_ip", last_ip, confidence=confidence)
-            self.store.update("last_target", last_ip, confidence=confidence)
+        # 1. IP Addresses
+        ips = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', text)
+        for ip in set(ips):
+            if ip != "127.0.0.1":
+                try:
+                    # Validate it's a real IP
+                    ipaddress.ip_address(ip)
+                    # Use update method which already exists in EntityStore
+                    self.store.update("last_ip", ip)
+                    self.store.update("last_target", ip)
+                except ValueError:
+                    pass # Skip invalid IPs
 
-        # Update last_domain
-        domains = re.findall(domain_pattern, text)
-        if domains:
-            clean_domains = []
-            for d in domains:
-                if re.match(r'^[\d\.]+$', d):
-                    continue
-                clean_domains.append(d)
-                
-            if clean_domains:
-                last_domain = clean_domains[-1]
-                self.store.update("last_domain", last_domain, confidence=confidence)
-                self.store.update("last_target", last_domain, confidence=confidence)
-                
-        # Update last_file
-        file_match = re.search(r'\b[\w\.-]+\.(?:txt|md|py|sh|log|csv|json)\b', text)
-        if file_match:
-            self.store.update("last_file", file_match.group(0), confidence=0.8)
+        # 2. Domains/hostnames
+        # Simple pattern: word.word or word with common TLD
+        domains = re.findall(r'\b([a-zA-Z0-9][a-zA-Z0-9\-\.]*[a-zA-Z0-9])\.(com|net|org|io|local|dev|test|app|cloud)\b', text)
+        for domain in set(domains):
+            # Reconstruct full domain
+            full_domain = f"{domain[0]}.{domain[1]}"
+            self.store.update("last_domain", full_domain)
+            self.store.update("last_target", full_domain)
+
+        # 3. File paths
+        paths = re.findall(r'(/[a-zA-Z0-9\._/-]+|~/[a-zA-Z0-9\._/-]+|[a-zA-Z0-9_\-\.]+\.[a-zA-Z]{2,4})', text)
+        for p in set(paths):
+            self.store.update("last_file", p)

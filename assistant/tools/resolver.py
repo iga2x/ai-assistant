@@ -8,24 +8,29 @@ class Resolver:
     """Resolves tool names, handles aliases and deprecation."""
 
     ALIASES = {
-        "netcat": "nc",
-        "ncat": "nc",
+        "zaproxy": "zap",
+        "volatility": "volatility3",
+        "nc": "netcat",
+        "ncat": "netcat",
     }
 
     REPLACEMENTS = {
-        "subjack": "subzy",  # deprecated → replacement
+        "subjack": "subzy",
+        "volatility": "volatility3",
     }
 
     DEPRECATED = {
         "subjack": "Deprecated, use subzy instead",
-        "wifitex": "Custom tool, remove - not maintained",
+        "wifitex": "Custom tool, removed",
     }
 
     BAD_VERSION_CMDS = {
-        "assetfinder": ["--help"],  # doesn't support --version
+        "assetfinder": ["--help"],
         "john": ["--list=build-info"],
         "autopsy": ["-h"],
         "dirsearch": ["--help"],
+        "subzy": ["--help"],
+        "aircrack-ng": ["--help"],
     }
 
     def resolve(self, name: str) -> Optional[str]:
@@ -54,7 +59,7 @@ class Resolver:
             logger.info(f"{name} is alias for {self.ALIASES[name_lower]}")
             return self.ALIASES[name_lower]
 
-        return name
+        return name_lower
 
     def get_version_flags(self, name: str, default_flags: list) -> list:
         """Get version flags, with overrides for problematic tools.

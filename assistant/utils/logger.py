@@ -34,3 +34,8 @@ def setup_logger(level=logging.INFO):
     return logger
 
 logger = logging.getLogger("assistant")
+
+def get_logger(name: str):
+    """Get a logger instance with a specific name."""
+    return logging.getLogger(f"assistant.{name}")
+
