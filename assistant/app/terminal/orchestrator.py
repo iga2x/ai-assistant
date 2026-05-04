@@ -102,6 +102,13 @@ class Orchestrator:
             output = plan_response.content
             final_plan = None
 
+        # Calculate if system context is allowed for this request
+        allows_context = self._allows_system_context(user_input, plan_response, None)
+
+        # Apply response filter to remove leaked system context
+        filtered_content, filter_metadata = self._filter_system_context(output, allows_context)
+
+        output = filtered_content
         final_content = output
 
         # LEARN — only extract entities from meaningful task output, not chat responses
@@ -159,13 +166,22 @@ class Orchestrator:
             conv_service.save_message(conversation_id, "user", user_input)
             conv_service.save_message(conversation_id, "assistant", final_content)
 
+        # Build debug metadata
+        debug_info = {
+            "context_filter": {
+                "allowed": allows_context,
+                "filtered": filter_metadata["filtered"],
+                "reason": filter_metadata.get("reason")
+            }
+        }
 
         return {
             "output": final_content,
             "plan": final_plan,
             "reasoning": plan_response.reasoning,
             "action_request": plan_response.action_request,
-            "status": "completed"
+            "status": "completed",
+            "debug": debug_info
         }
 
     def _split_multi_task(self, text: str) -> List[str]:
@@ -340,39 +356,82 @@ class Orchestrator:
         if not content or not content.strip():
             return content, filter_metadata
 
-        if allow_system_context:
-            return content, filter_metadata
+        # Initialize filtered_content
+        filtered_content = content
 
+        if allow_system_context:
+            # When system context is explicitly allowed, only filter obvious header leaks
+            # Individual lines like "OS: Linux" are OK when context is requested
+            # But headers like "Your current system info:" are always leaks
+            header_patterns = [
+                r'Your current system info:',
+                r'Current system info:',
+                r'Your system:',
+            ]
+
+            # Check if any header patterns are present
+            for header_pattern in header_patterns:
+                # Find where the header appears
+                header_match = re.search(header_pattern, filtered_content, re.IGNORECASE)
+                if header_match:
+                    # Everything from the header to the end should be filtered
+                    # (assuming the header starts a new section that goes to the end)
+                    start_pos = header_match.start()
+                    filtered_content = filtered_content[:start_pos].rstrip()
+                    filter_metadata["filtered"] = True
+                    filter_metadata["sections_removed"].append('system_info_header')
+                    logger.debug(f"Filtered system context section (even when allowed): system_info_header")
+                    break
+
+            # Clean up and return
+            filtered_content = re.sub(r'\n{3,}', '\n\n', filtered_content)
+            filtered_content = filtered_content.strip()
+
+            if filter_metadata["filtered"]:
+                filter_metadata["reason"] = "Filtered obvious system context header"
+
+            return filtered_content, filter_metadata
+
+        # When system context is NOT allowed, filter more aggressively
         # Patterns to filter (conservative - only obvious leaks)
         # These patterns match sections AI might add based on prompt context
         patterns_to_filter = [
-            (r'Your current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header'),
-            (r'Current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header'),
-            (r'Your system:[\s\S]*?(?=\n\n|$)', 'system_header'),
-            (r'Hostname:[\s\S]*?(?=\n|$)', 'hostname_line'),
-            (r'OS:[\s\S]*?(?=\n|$)', 'os_line'),
-            (r'Current User:[\s\S]*?(?=\n|$)', 'user_line'),
-            (r'Local IP:[\s\S]*?(?=\n|$)', 'ip_line'),
-            (r'On\s+\w+.*?system.*?you\'?re running[\s\S]*?(?=\n|$)', 'system_statement'),
-            (r'On\s+\w+.*?you\s*are running[\s\S]*?(?=\n|$)', 'system_statement_alt'),
+            # Header patterns - filter these unconditionally as they're clear indicators of leaked context
+            (r'Your current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header', True),
+            (r'Current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header', True),
+            (r'Your system:[\s\S]*?(?=\n\n|$)', 'system_header', True),
+            # Field patterns - only filter if they contain system context keywords
+            (r'Hostname:[\s\S]*?(?=\n|$)', 'hostname_line', False),
+            (r'OS:[\s\S]*?(?=\n|$)', 'os_line', False),
+            (r'Current User:[\s\S]*?(?=\n|$)', 'user_line', False),
+            (r'Local IP:[\s\S]*?(?=\n|$)', 'ip_line', False),
+            (r'On\s+\w+.*?system.*?you\'?re running[\s\S]*?(?=\n|$)', 'system_statement', False),
+            (r'On\s+\w+.*?you\s*are running[\s\S]*?(?=\n|$)', 'system_statement_alt', False),
         ]
 
-        filtered_content = content
-
-        for pattern, section_name in patterns_to_filter:
+        for pattern, section_name, unconditional in patterns_to_filter:
             # Find all matches
             matches = list(re.finditer(pattern, filtered_content, re.IGNORECASE | re.MULTILINE))
 
             if not matches:
                 continue
 
-            # Check if match contains system context keywords
-            # This protects legitimate command outputs that happen to match pattern structure
-            context_keywords = ['hostname', 'operating system', 'current user', 'local ip', 'interface', 'installed tools', 'os:']
+            # Check if match should be filtered
+            should_filter = unconditional
 
-            for match in matches:
-                matched_text = match.group()
-                if any(kw in matched_text.lower() for kw in context_keywords):
+            if not should_filter:
+                # For conditional patterns, check if match contains system context keywords
+                # This protects legitimate command outputs that happen to match pattern structure
+                context_keywords = ['hostname', 'operating system', 'current user', 'local ip', 'interface', 'installed tools', 'os:']
+
+                for match in matches:
+                    matched_text = match.group()
+                    if any(kw in matched_text.lower() for kw in context_keywords):
+                        should_filter = True
+                        break
+
+            if should_filter:
+                for match in matches:
                     filter_metadata["filtered"] = True
                     filter_metadata["sections_removed"].append(section_name)
 
