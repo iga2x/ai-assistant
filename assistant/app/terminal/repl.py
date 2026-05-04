@@ -41,7 +41,10 @@ class InteractiveREPL:
         self.workflow_mgr = WorkflowManager()
 
         self.executor = Executor(self.db, self.pipeline.router, self.config_mgr.config if self.config_mgr else None)
-        
+
+        # Debug mode flag
+        self.debug_enabled = False
+
         # Initialize session state
         self.conversation = None
         if self.conv_service:
@@ -125,6 +128,9 @@ class InteractiveREPL:
                         continue
                     if user_input.startswith("/debug"):
                         self.handle_debug_command(user_input)
+                        if not user_input.startswith("/debug "):  # If just /debug, toggle mode
+                            self.debug_enabled = not self.debug_enabled
+                            console.print(f"[bold green]Debug mode: {'enabled' if self.debug_enabled else 'disabled'}[/bold green]")
                         continue
                     if user_input.startswith("/status"):
                         self.show_status()
@@ -187,6 +193,7 @@ Available Commands:
 /report  - Generate a Markdown session report
 /compare - Compare the last two scans for the current target
 /mode    - Toggle between 'chat', 'semi', and 'full' modes
+/debug   - Show debug info (/debug to toggle, /debug intent, /debug plan, /debug prompt)
 /history - Show recent conversation history
 /test    - Run health tests (/test brain, /test body)
 /plan    - Show dry-run plan for a request (/plan scan 127.0.0.1)
@@ -273,6 +280,16 @@ Available Commands:
         # Display Latency for debug/perf monitoring
         if hasattr(response, 'latency'):
             console.print(f"[dim]Latency: {response.latency:.2f}s[/dim]")
+
+        # Show context filter metadata
+        if self.debug_enabled and hasattr(response, 'debug'):
+            context_filter = response.debug.get("context_filter")
+            if context_filter and context_filter.get("filtered"):
+                console.print(
+                    f"[dim][CTX] system_context_allowed={context_filter['allowed']} "
+                    f"filtered={context_filter['filtered']} "
+                    f"reason={context_filter['reason']}[/dim]"
+                )
 
 
         # Check if it's a direct chat or read-only action (already handled in pipeline for read-only)
@@ -551,7 +568,7 @@ Available Commands:
             else:
                 console.print("[yellow]No recent plan generated.[/yellow]")
         else:
-            console.print("[dim]Available debug: /debug prompt, /debug intent, /debug plan[/dim]")
+            console.print("[dim]Available debug: /debug (toggle), /debug prompt, /debug intent, /debug plan[/dim]")
 
     def show_status(self):
         console.print(Panel(

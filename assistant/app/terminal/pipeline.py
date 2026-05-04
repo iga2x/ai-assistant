@@ -52,14 +52,15 @@ class ChatPipeline:
         # Orchestrator natively handles Chat (Path A) vs Task (Path B) in a single LLM request.
         
         result = await self.orchestrator.run(user_input, conversation_id)
-        
+
         # If the Orchestrator didn't produce an executable plan, it's natively treated as Chat.
         return SimpleNamespace(
             content=result.get("output", "I understand."),
             plan=result["plan"],
             reasoning=result.get("reasoning", ""),
             action_request=result.get("action_request"),
-            latency=time.time() - start_time
+            latency=time.time() - start_time,
+            debug=result.get("debug", {})
         )
 
 
