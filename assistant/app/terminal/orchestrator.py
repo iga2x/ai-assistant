@@ -293,4 +293,33 @@ class Orchestrator:
             "status": "completed"
         }
 
+    def _allows_system_context(self, user_input: str, plan_response, execution_result) -> bool:
+        """Determine if system context may appear in user-facing answer."""
+        import re
+
+        # Pattern 1: User explicitly asks for system info
+        system_info_patterns = [
+            r'\b(?:what\'?s?\s*(?:my|your|the)\s*(?:hostname|os|operating\s+system|username|user|ip(?:\s+address)?|interface))',
+            r'\b(?:show|list|tell\s+me|display)\s*(?:system\s*info|hostname|os|ip|interface)',
+            r'\b(?:hostname|whoami|id|uname)\b',  # Command names
+            r'\b(?:find|get|show|what\s+(?:is|are|are))\s*(?:my|your|the)\s*(?:hostname|os|username|ip|address)',
+        ]
+
+        for pattern in system_info_patterns:
+            if re.search(pattern, user_input, re.IGNORECASE):
+                logger.debug(f"User explicitly requested system info: {user_input}")
+                return True
+
+        # Pattern 2: Command was executed and result is being summarized
+        if execution_result and execution_result.success:
+            logger.debug(f"System context allowed: command executed successfully")
+            return True
+
+        # Pattern 3: Plan exists with steps (task execution context)
+        if plan_response.plan and plan_response.plan.steps:
+            logger.debug(f"System context allowed: plan with steps exists")
+            return True
+
+        logger.debug(f"System context not allowed: {user_input}")
+        return False
 
