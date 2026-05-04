@@ -123,3 +123,74 @@ class TestAllowsSystemContext:
         for user_input in test_inputs:
             result = orchestrator._allows_system_context(user_input, mock_plan_response, mock_execution_result)
             assert result is False, f"Input '{user_input}' should not allow system context"
+
+
+class TestFilterSystemContext:
+    """Test the _filter_system_context method."""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create an orchestrator instance for testing."""
+        mock_db = MagicMock()
+        mock_config = MagicMock()
+        mock_config.config = {}
+        mock_sys_info = {
+            'hostname': 'test-host',
+            'username': 'test-user',
+            'os': 'Linux'
+        }
+
+        orch = Orchestrator(mock_db, mock_config, mock_sys_info)
+        return orch
+
+    def test_filter_removes_leaked_system_info(self, orchestrator):
+        """Filter should remove obvious leaked system context sections."""
+        content = """This is the answer.
+
+Your current system info:
+Hostname: test-host
+OS: Linux
+Current User: test-user
+Local IP: 192.168.1.1
+
+More content here."""
+
+        filtered, metadata = orchestrator._filter_system_context(content, allow_system_context=False)
+
+        assert metadata["filtered"] is True, "Should indicate filtering occurred"
+        assert "Hostname: test-host" not in filtered, "Should remove leaked hostname"
+        assert "OS: Linux" not in filtered, "Should remove leaked OS"
+        assert "Current User: test-user" not in filtered, "Should remove leaked user"
+        assert "This is the answer" in filtered, "Should preserve legitimate content"
+        assert "More content here" in filtered, "Should preserve legitimate content"
+
+    def test_filter_preserves_command_results(self, orchestrator):
+        """Filter should preserve legitimate command outputs that look like system info."""
+        # Simulate output from a legitimate command
+        content = """Here are the network interfaces:
+
+eth0: 192.168.1.100
+wlan0: 10.0.0.50
+
+The system has 2 active interfaces."""
+
+        filtered, metadata = orchestrator._filter_system_context(content, allow_system_context=False)
+
+        assert metadata["filtered"] is False, "Should not filter legitimate command output"
+        assert "eth0: 192.168.1.100" in filtered, "Should preserve legitimate interface output"
+        assert "wlan0: 10.0.0.50" in filtered, "Should preserve legitimate interface output"
+
+    def test_filter_skips_when_allowed(self, orchestrator):
+        """Filter should not modify content when system context is allowed."""
+        content = """Your current system info:
+Hostname: test-host
+OS: Linux
+
+This is the answer."""
+
+        filtered, metadata = orchestrator._filter_system_context(content, allow_system_context=True)
+
+        assert metadata["filtered"] is False, "Should not filter when system context is allowed"
+        assert "Hostname: test-host" in filtered, "Should preserve content when allowed"
+        assert "OS: Linux" in filtered, "Should preserve content when allowed"
+        assert filtered == content, "Content should remain unchanged"

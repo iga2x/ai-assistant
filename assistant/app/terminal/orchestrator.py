@@ -323,3 +323,70 @@ class Orchestrator:
         logger.debug(f"System context not allowed: {user_input}")
         return False
 
+    def _filter_system_context(self, content: str, allow_system_context: bool) -> tuple[str, dict]:
+        """Remove leaked system context from AI responses when not allowed.
+
+        Conservative approach: only filter obvious leaked sections with system context keywords.
+        Preserves legitimate command results and structured output.
+        """
+        import re
+
+        filter_metadata = {
+            "filtered": False,
+            "sections_removed": [],
+            "reason": None
+        }
+
+        if not content or not content.strip():
+            return content, filter_metadata
+
+        if allow_system_context:
+            return content, filter_metadata
+
+        # Patterns to filter (conservative - only obvious leaks)
+        # These patterns match sections AI might add based on prompt context
+        patterns_to_filter = [
+            (r'Your current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header'),
+            (r'Current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header'),
+            (r'Your system:[\s\S]*?(?=\n\n|$)', 'system_header'),
+            (r'Hostname:[\s\S]*?(?=\n|$)', 'hostname_line'),
+            (r'OS:[\s\S]*?(?=\n|$)', 'os_line'),
+            (r'Current User:[\s\S]*?(?=\n|$)', 'user_line'),
+            (r'Local IP:[\s\S]*?(?=\n|$)', 'ip_line'),
+            (r'On\s+\w+.*?system.*?you\'?re running[\s\S]*?(?=\n|$)', 'system_statement'),
+            (r'On\s+\w+.*?you\s*are running[\s\S]*?(?=\n|$)', 'system_statement_alt'),
+        ]
+
+        filtered_content = content
+
+        for pattern, section_name in patterns_to_filter:
+            # Find all matches
+            matches = list(re.finditer(pattern, filtered_content, re.IGNORECASE | re.MULTILINE))
+
+            if not matches:
+                continue
+
+            # Check if match contains system context keywords
+            # This protects legitimate command outputs that happen to match pattern structure
+            context_keywords = ['hostname', 'operating system', 'current user', 'local ip', 'interface', 'installed tools', 'os:']
+
+            for match in matches:
+                matched_text = match.group()
+                if any(kw in matched_text.lower() for kw in context_keywords):
+                    filter_metadata["filtered"] = True
+                    filter_metadata["sections_removed"].append(section_name)
+
+                    # Remove the matched section
+                    filtered_content = re.sub(pattern, '', filtered_content, flags=re.IGNORECASE | re.MULTILINE, count=1)
+                    logger.debug(f"Filtered system context section: {section_name}")
+                    break
+
+        # Clean up extra whitespace from removed sections
+        filtered_content = re.sub(r'\n{3,}', '\n\n', filtered_content)
+        filtered_content = filtered_content.strip()
+
+        if filter_metadata["filtered"]:
+            filter_metadata["reason"] = "System context not explicitly requested"
+
+        return filtered_content, filter_metadata
+
