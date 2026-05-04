@@ -363,25 +363,27 @@ class Orchestrator:
             # When system context is explicitly allowed, only filter obvious header leaks
             # Individual lines like "OS: Linux" are OK when context is requested
             # But headers like "Your current system info:" are always leaks
+            # Use the same pattern-based approach as the not-allowed case
             header_patterns = [
-                r'Your current system info:',
-                r'Current system info:',
-                r'Your system:',
+                (r'Your current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header'),
+                (r'Current system info:[\s\S]*?(?=\n\n|$)', 'system_info_header'),
+                (r'Your system:[\s\S]*?(?=\n\n|$)', 'system_header'),
             ]
 
-            # Check if any header patterns are present
-            for header_pattern in header_patterns:
-                # Find where the header appears
-                header_match = re.search(header_pattern, filtered_content, re.IGNORECASE)
-                if header_match:
-                    # Everything from the header to the end should be filtered
-                    # (assuming the header starts a new section that goes to the end)
-                    start_pos = header_match.start()
-                    filtered_content = filtered_content[:start_pos].rstrip()
-                    filter_metadata["filtered"] = True
-                    filter_metadata["sections_removed"].append('system_info_header')
-                    logger.debug(f"Filtered system context section (even when allowed): system_info_header")
-                    break
+            for pattern, section_name in header_patterns:
+                # Find all matches
+                matches = list(re.finditer(pattern, filtered_content, re.IGNORECASE | re.MULTILINE))
+
+                if matches:
+                    # Remove header section (everything from header to next blank line or end)
+                    for match in matches:
+                        filter_metadata["filtered"] = True
+                        filter_metadata["sections_removed"].append(section_name)
+
+                        # Remove the matched section
+                        filtered_content = re.sub(pattern, '', filtered_content, flags=re.IGNORECASE | re.MULTILINE, count=1)
+                        logger.debug(f"Filtered system context header (even when allowed): {section_name}")
+                        break
 
             # Clean up and return
             filtered_content = re.sub(r'\n{3,}', '\n\n', filtered_content)
