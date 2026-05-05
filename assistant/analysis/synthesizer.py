@@ -20,37 +20,78 @@ if TYPE_CHECKING:
     from assistant.actions.executor import ExecutionResult
     from assistant.tasks.task_types import Plan
 
+# Import the new types
+from assistant.ai.response_types_v2 import StructuredResponse
+
+
+# ---------------------------------------------------------------------------
+# Helper function to format structured synthesis
+# ---------------------------------------------------------------------------
+
+def _format_structured_synthesis(answer: str, command: str = None, details: str = None, next_step: str = None) -> str:
+    """Format synthesis output as structured response."""
+    output = f"Answer: {answer}\n\n"
+
+    if command:
+        output += f"Command / Example:\n{command}\n\n"
+
+    if details:
+        output += f"Details: {details}\n\n"
+
+    if next_step:
+        output += f"Next step: {next_step}"
+
+    return output.strip()
+
 
 # ---------------------------------------------------------------------------
 # Deterministic parsers — interpret command output without AI
 # ---------------------------------------------------------------------------
 
-def _parse_ip_addr(stdout: str) -> Optional[str]:
-    """Extract primary non-loopback IPv4 from `ip addr show` output."""
+def _parse_ip_addr(stdout: str) -> Optional[dict]:
+    """Extract primary non-loopback IPv4 from `ip addr show` output.
+    Returns dict with 'answer' and 'details' keys.
+    """
     for line in stdout.splitlines():
         # Handle cases with extra text or specific formatting
         m = re.search(r'inet\s+((?!127\.)\d{1,3}(?:\.\d{1,3}){3})', line)
         if m:
-            return m.group(1)
+            return {
+                "answer": f"Your local IP is {m.group(1)}.",
+                "command": "hostname -I",
+                "details": "This shows the IP addresses assigned to your machine."
+            }
     return None
 
 
-def _parse_default_gateway(stdout: str) -> Optional[str]:
-    """Extract gateway IP from `ip route show default` or `ip route` output."""
+def _parse_default_gateway(stdout: str) -> Optional[dict]:
+    """Extract gateway IP from `ip route show default` or `ip route` output.
+    Returns dict with 'answer' and 'details' keys.
+    """
     for line in stdout.splitlines():
         # Match 'default via X.X.X.X' or just 'via X.X.X.X' in a route line
         m = re.search(r'(?:default\s+)?via\s+([\d\.]+)', line)
         if m:
-            return m.group(1)
+            return {
+                "answer": f"Your default gateway is {m.group(1)}.",
+                "command": "ip route show default",
+                "details": "This is the router your machine uses to reach external networks."
+            }
     # Also handle `hostname -I` style
     tokens = stdout.strip().split()
     if tokens and re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', tokens[0]):
-        return tokens[0]
+        return {
+            "answer": f"Your local IP is {tokens[0]}.",
+            "command": "hostname -I",
+            "details": "This shows the IP addresses assigned to your machine."
+        }
     return None
 
 
-def _parse_nmap_summary(stdout: str) -> Optional[str]:
-    """Summarise nmap scan output."""
+def _parse_nmap_summary(stdout: str) -> Optional[dict]:
+    """Summarise nmap scan output.
+    Returns dict with 'answer' and 'details' keys.
+    """
     if not stdout:
         return None
     open_ports = []
@@ -68,17 +109,31 @@ def _parse_nmap_summary(stdout: str) -> Optional[str]:
         summary = f"Open ports found: {', '.join(open_ports)}."
         if closed_match:
             summary += f" ({closed_match.group(1)} ports closed/filtered.)"
-        return summary
+        return {
+            "answer": summary,
+            "command": "nmap",
+            "details": f"Found {len(open_ports)} open service(s) on the target."
+        }
     if closed_match:
-        return f"No open ports. All {closed_match.group(1)} scanned ports are closed or filtered."
+        return {
+            "answer": f"No open ports. All {closed_match.group(1)} scanned ports are closed or filtered.",
+            "command": "nmap",
+            "details": "The target host is up but no services are listening on the scanned ports."
+        }
     # Generic fallback
     if "Host seems down" in stdout:
-        return "Host appears to be down or not responding to probes."
+        return {
+            "answer": "Host appears to be down or not responding to probes.",
+            "command": "nmap",
+            "details": "The target may be offline or blocking ICMP probes."
+        }
     return None
 
 
-def _parse_nmap_discovery(stdout: str) -> Optional[str]:
-    """Parse nmap host discovery (nmap -sn) output."""
+def _parse_nmap_discovery(stdout: str) -> Optional[dict]:
+    """Parse nmap host discovery (nmap -sn) output.
+    Returns dict with 'answer' and 'details' keys.
+    """
     if not stdout:
         return None
 
@@ -91,7 +146,11 @@ def _parse_nmap_discovery(stdout: str) -> Optional[str]:
     if hosts:
         # Filter out localhost if it's the only result
         if len(hosts) == 1 and hosts[0] in ["127.0.0.1", "localhost"]:
-            return "No additional network devices found."
+            return {
+                "answer": "No additional network devices found.",
+                "command": "nmap -sn",
+                "details": "Only localhost responded to discovery probes."
+            }
         # Remove duplicates while preserving order
         seen = set()
         unique_hosts = []
@@ -99,12 +158,18 @@ def _parse_nmap_discovery(stdout: str) -> Optional[str]:
             if host not in seen:
                 seen.add(host)
                 unique_hosts.append(host)
-        return f"Discovered devices: {', '.join(unique_hosts)}"
+        return {
+            "answer": f"Discovered devices: {', '.join(unique_hosts)}",
+            "command": "nmap -sn",
+            "details": f"Found {len(unique_hosts)} active host(s) on the network."
+        }
     return None
 
 
-def _parse_ss_tuln(stdout: str) -> Optional[str]:
-    """Extract listening ports from `ss -tuln` output."""
+def _parse_ss_tuln(stdout: str) -> Optional[dict]:
+    """Extract listening ports from `ss -tuln` output.
+    Returns dict with 'answer' and 'details' keys.
+    """
     ports = set()
     for line in stdout.splitlines():
         # Extract port from e.g. "0.0.0.0:80" or "[::]:80" or "*:80"
@@ -114,15 +179,26 @@ def _parse_ss_tuln(stdout: str) -> Optional[str]:
             if port not in ["53", "5353"]: # Skip common low-level system ports for brevity
                 ports.add(port)
     if ports:
-        return f"Listening ports: {', '.join(sorted(list(ports), key=int))}."
+        sorted_ports = sorted(list(ports), key=int)
+        return {
+            "answer": f"Listening ports: {', '.join(sorted_ports)}.",
+            "command": "ss -tuln",
+            "details": f"Your machine has {len(sorted_ports)} service(s) listening for incoming connections."
+        }
     return None
 
 
-def _parse_hostname_i(stdout: str) -> Optional[str]:
-    """Extract IP from `hostname -I` output."""
+def _parse_hostname_i(stdout: str) -> Optional[dict]:
+    """Extract IP from `hostname -I` output.
+    Returns dict with 'answer' and 'details' keys.
+    """
     tokens = stdout.strip().split()
     if tokens and re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', tokens[0]):
-        return tokens[0]
+        return {
+            "answer": f"Your local IP is {tokens[0]}.",
+            "command": "hostname -I",
+            "details": "This shows the IP addresses assigned to your machine."
+        }
     return None
 
 
@@ -202,42 +278,63 @@ async def synthesize_result(
     # -----------------------------------------------------------------------
     # 2. Deterministic extraction (combine all steps)
     # -----------------------------------------------------------------------
-    parts = []
     for step in result.steps:
         cmd = step.command.lower()
         out = step.stdout
-        
+
         if "ip addr" in cmd or "ifconfig" in cmd:
-            ip = _parse_ip_addr(out)
-            if ip: parts.append(f"Local IP: **{ip}**")
-            
+            parsed = _parse_ip_addr(out)
+            if parsed:
+                return _format_structured_synthesis(
+                    answer=parsed.get("answer"),
+                    command=parsed.get("command"),
+                    details=parsed.get("details")
+                )
+
         if "ip route" in cmd or "route" in cmd:
-            gw = _parse_default_gateway(out)
-            if gw: parts.append(f"Default gateway: **{gw}**")
-            
+            parsed = _parse_default_gateway(out)
+            if parsed:
+                return _format_structured_synthesis(
+                    answer=parsed.get("answer"),
+                    command=parsed.get("command"),
+                    details=parsed.get("details")
+                )
+
         if "nmap" in cmd:
             # Try port scan parsing first
             s = _parse_nmap_summary(out)
-            if s: parts.append(s)
+            if s:
+                return _format_structured_synthesis(
+                    answer=s.get("answer"),
+                    command=s.get("command"),
+                    details=s.get("details")
+                )
             # Also try host discovery parsing
             d = _parse_nmap_discovery(out)
-            if d: parts.append(d)
-            
-        if "hostname" in cmd:
-            ip = _parse_hostname_i(out)
-            if ip: parts.append(f"IP: **{ip}**")
-            
-        if "ss -tuln" in cmd or "netstat -tuln" in cmd:
-            ps = _parse_ss_tuln(out)
-            if ps: parts.append(ps)
+            if d:
+                return _format_structured_synthesis(
+                    answer=d.get("answer"),
+                    command=d.get("command"),
+                    details=d.get("details")
+                )
 
-    if parts:
-        # De-duplicate parts while preserving order
-        unique_parts = []
-        for p in parts:
-            if p not in unique_parts:
-                unique_parts.append(p)
-        return "  ".join(unique_parts)
+        if "hostname" in cmd:
+            parsed = _parse_hostname_i(out)
+            if parsed:
+                return _format_structured_synthesis(
+                    answer=parsed.get("answer"),
+                    command=parsed.get("command"),
+                    details=parsed.get("details")
+                )
+
+        if "ss -tuln" in cmd or "netstat -tuln" in cmd:
+            parsed = _parse_ss_tuln(out)
+            if parsed:
+                return _format_structured_synthesis(
+                    answer=parsed.get("answer"),
+                    command=parsed.get("command"),
+                    details=parsed.get("details")
+                )
 
     # -----------------------------------------------------------------------
     # 3. AI synthesis — only for complex/flagged plans
@@ -266,7 +363,9 @@ async def synthesize_result(
                     raw = d.get("content", raw)
                 except Exception:
                     pass
-            return raw.strip() if raw.strip() else None
+            # Format the AI response using structured format
+            if raw.strip():
+                return f"Answer: {raw.strip()}"
         except Exception:
             return None
 

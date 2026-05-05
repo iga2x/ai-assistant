@@ -15,12 +15,15 @@ Host is up (0.0012s latency).
 Nmap scan report for 192.168.1.100
 Host is up (0.0023s latency).
 Nmap done: 256 IP addresses (2 hosts up) scanned in 2.45 seconds"""
-        
+
         result = _parse_nmap_discovery(output)
         assert result is not None
-        assert "192.168.1.1" in result
-        assert "192.168.1.100" in result
-        assert "Discovered devices:" in result
+        assert isinstance(result, dict)
+        assert "192.168.1.1" in result.get("answer", "")
+        assert "192.168.1.100" in result.get("answer", "")
+        assert "Discovered devices:" in result.get("answer", "")
+        assert result.get("command") == "nmap -sn"
+        assert "2 active host" in result.get("details", "")
     
     def test_parse_discovery_single_host(self):
         """Test parsing single discovered host."""
@@ -28,11 +31,14 @@ Nmap done: 256 IP addresses (2 hosts up) scanned in 2.45 seconds"""
 Nmap scan report for 192.168.1.1
 Host is up (0.0012s latency).
 Nmap done: 256 IP addresses (1 host up) scanned in 1.2 seconds"""
-        
+
         result = _parse_nmap_discovery(output)
         assert result is not None
-        assert "192.168.1.1" in result
-        assert "Discovered devices:" in result
+        assert isinstance(result, dict)
+        assert "192.168.1.1" in result.get("answer", "")
+        assert "Discovered devices:" in result.get("answer", "")
+        assert result.get("command") == "nmap -sn"
+        assert "1 active host" in result.get("details", "")
     
     def test_parse_discovery_localhost_only(self):
         """Test parsing when only localhost is found."""
@@ -40,10 +46,13 @@ Nmap done: 256 IP addresses (1 host up) scanned in 1.2 seconds"""
 Nmap scan report for 127.0.0.1
 Host is up (0.000010s latency).
 Nmap done: 1 IP address (1 host up) scanned in 0.05 seconds"""
-        
+
         result = _parse_nmap_discovery(output)
         assert result is not None
-        assert "No additional network devices found" in result
+        assert isinstance(result, dict)
+        assert "No additional network devices found" in result.get("answer", "")
+        assert result.get("command") == "nmap -sn"
+        assert "localhost" in result.get("details", "")
     
     def test_parse_discovery_empty(self):
         """Test parsing empty output."""
@@ -70,24 +79,31 @@ PORT   STATE SERVICE
 22/tcp open  ssh
 80/tcp open  http
 443/tcp open https"""
-        
+
         result = _parse_nmap_summary(output)
         assert result is not None
-        assert "22/tcp" in result
-        assert "ssh" in result
-        assert "80/tcp" in result
-        assert "http" in result
-        assert "Open ports found:" in result
+        assert isinstance(result, dict)
+        assert "22/tcp" in result.get("answer", "")
+        assert "ssh" in result.get("answer", "")
+        assert "80/tcp" in result.get("answer", "")
+        assert "http" in result.get("answer", "")
+        assert "Open ports found:" in result.get("answer", "")
+        assert result.get("command") == "nmap"
+        assert "3 open service" in result.get("details", "")
     
     def test_parse_ports_closed(self):
         """Test parsing closed ports."""
         output = """Starting Nmap 7.94
 Nmap scan report for localhost (127.0.0.1)
 All 1000 scanned ports on localhost are closed"""
-        
+
         result = _parse_nmap_summary(output)
         assert result is not None
-        assert "No open ports" in result or "closed" in result
+        assert isinstance(result, dict)
+        assert "No open ports" in result.get("answer", "")
+        assert "closed" in result.get("answer", "")
+        assert result.get("command") == "nmap"
+        assert result.get("details", "") != ""
     
     def test_parse_ports_empty(self):
         """Test parsing empty output."""
@@ -104,18 +120,20 @@ class TestCombinedParsing:
 PORT   STATE SERVICE
 22/tcp open  ssh
 80/tcp open  http"""
-        
+
         discovery_output = """Starting Nmap 7.94
 Nmap scan report for 192.168.1.1
 Host is up"""
-        
+
         port_result = _parse_nmap_summary(port_output)
         discovery_result = _parse_nmap_discovery(discovery_output)
-        
+
         assert port_result is not None
         assert discovery_result is not None
-        assert "22/tcp" in port_result
-        assert "192.168.1.1" in discovery_result
+        assert isinstance(port_result, dict)
+        assert isinstance(discovery_result, dict)
+        assert "22/tcp" in port_result.get("answer", "")
+        assert "192.168.1.1" in discovery_result.get("answer", "")
 
 
 if __name__ == "__main__":
