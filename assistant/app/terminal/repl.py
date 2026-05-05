@@ -6,10 +6,13 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.table import Table
 from rich.prompt import Confirm
+from rich.syntax import Syntax
 
 from assistant.utils.paths import get_log_file
 from assistant.system.discovery import discover_system
 from assistant.ai.detector import detect_providers
+from assistant.ai.response_parser import ResponseParser
+from assistant.ai.response_types_v2 import StructuredResponse
 from assistant.tools.manager import ToolManager
 from assistant.config.manager import ConfigManager
 from assistant.db.database import DatabaseManager
@@ -44,6 +47,9 @@ class InteractiveREPL:
 
         # Debug mode flag
         self.debug_enabled = False
+
+        # Response parser for structured responses
+        self.response_parser = ResponseParser()
 
         # Initialize session state
         self.conversation = None
@@ -294,15 +300,27 @@ Available Commands:
 
         # Check if it's a direct chat or read-only action (already handled in pipeline for read-only)
         if not response.plan:
-            console.print(f"\n[bold green]AI:[/bold green] {response.content}")
+            # Parse structured response
+            if response.content:
+                structured = self.response_parser.parse(response.content)
+
+                # Render using structured renderer
+                console.print()  # Add spacing
+                render_structured_response(console, structured)
             return
 
         # Handle Intent Groups
         from assistant.tasks.task_types import NON_EXECUTABLE_INTENTS, READ_ONLY_INTENTS, CONFIRMATION_INTENTS, EXECUTABLE_INTENTS
-        
+
         if response.plan.intent in NON_EXECUTABLE_INTENTS:
             # Direct Chat Path: Just print
-            console.print(f"\n[bold green]AI:[/bold green] {response.content}")
+            # Parse structured response
+            if response.content:
+                structured = self.response_parser.parse(response.content)
+
+                # Render using structured renderer
+                console.print()  # Add spacing
+                render_structured_response(console, structured)
             return
 
         if response.plan.intent in CONFIRMATION_INTENTS:
@@ -321,21 +339,32 @@ Available Commands:
                     explanation = f"To accomplish '{response.plan.title}', you can run:\n" + "\n".join([f"  {cmd}" for cmd in cmds])
                     console.print(f"\n[bold green]AI:[/bold green] {explanation}")
                     return
+            # Parse structured response
             if response.content:
-                console.print(f"\n[bold green]AI:[/bold green] {response.content}")
+                structured = self.response_parser.parse(response.content)
+
+                # Render using structured renderer
+                console.print()  # Add spacing
+                render_structured_response(console, structured)
             return
             
+        # Parse structured response
         if response.content:
-            prefix = ""
+            structured = self.response_parser.parse(response.content)
+
+            # Render using structured renderer
+            console.print()  # Add spacing
+            render_structured_response(console, structured)
+
+            # Add mode-specific prefix if needed
             if response.plan and response.plan.intent not in NON_EXECUTABLE_INTENTS:
                 if mode == "semi":
-                    prefix = "I have prepared a plan: "
+                    console.print("[dim]I have prepared a plan (see approval below)[/dim]")
                 elif mode == "full":
                     if response.plan.requires_approval:
-                        prefix = "I have prepared a plan: "
+                        console.print("[dim]I have prepared a plan (see approval below)[/dim]")
                     else:
-                        prefix = "Executing plan: "
-            console.print(f"\n[bold green]AI:[/bold green] {prefix}{response.content}")
+                        console.print("[dim]Executing plan[/dim]")
 
         exec_result = None
         if mode == "semi":
@@ -692,6 +721,29 @@ Available Commands:
             console.print(diff_table)
         else:
             console.print("[yellow]No previous scans found for this target to compare.[/yellow]")
+
+
+def render_structured_response(console, response: StructuredResponse):
+    """Render a structured response with Rich formatting."""
+    # Always render Answer
+    console.print(f"[bold green]Answer:[/bold green] {response.answer}")
+
+    # Render Command/Example if present
+    if response.command:
+        console.print(f"[bold cyan]Command / Example:[/bold cyan]")
+        # Use code block if it looks like a command
+        if response.command.strip().startswith(("hostname", "ip", "nmap", "ss", "ping")):
+            console.print(Syntax(response.command.strip(), "bash", theme="monokai", line_numbers=False))
+        else:
+            console.print(response.command.strip())
+
+    # Render Details if present
+    if response.details:
+        console.print(f"[bold yellow]Details:[/bold yellow] {response.details}")
+
+    # Render Next step if present
+    if response.next_step:
+        console.print(f"[bold magenta]Next step:[/bold magenta] {response.next_step}")
 
 
 def _needs_ai_synthesis_check(plan, result) -> bool:
