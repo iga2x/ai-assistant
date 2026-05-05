@@ -20,15 +20,17 @@ if TYPE_CHECKING:
     from assistant.actions.executor import ExecutionResult
     from assistant.tasks.task_types import Plan
 
-# Import the new types
-from assistant.ai.response_types_v2 import StructuredResponse
-
 
 # ---------------------------------------------------------------------------
 # Helper function to format structured synthesis
 # ---------------------------------------------------------------------------
 
-def _format_structured_synthesis(answer: str, command: str = None, details: str = None, next_step: str = None) -> str:
+def _format_structured_synthesis(
+    answer: str,
+    command: Optional[str] = None,
+    details: Optional[str] = None,
+    next_step: Optional[str] = None
+) -> str:
     """Format synthesis output as structured response."""
     output = f"Answer: {answer}\n\n"
 
