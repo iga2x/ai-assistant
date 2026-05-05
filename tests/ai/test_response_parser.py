@@ -70,3 +70,16 @@ def test_parse_unstructured_response_fallback():
     assert isinstance(result, StructuredResponse)
     assert result.answer == "This is an unstructured response without any labeled fields."
     assert result.command is None
+
+def test_parse_response_with_empty_command_field():
+    """Test parser handles empty fields correctly."""
+    text = """Answer: This is the answer.
+
+Command / Example:
+
+Details: These are details."""
+    parser = ResponseParser()
+    result = parser.parse(text)
+    assert result.answer == "This is the answer."
+    assert result.command is None  # Empty field should be None
+    assert result.details == "These are details."

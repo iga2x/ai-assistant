@@ -34,10 +34,16 @@ class ResponseParser:
         """Extract field content after one of the given labels."""
         for label in labels:
             # Match label, capture content until next label or end (with or without newline)
-            pattern = rf"{label}\s*(.+?)(?=\n(?:Answer:|Command|Example|Details:|Next|$)|$)"
+            pattern = rf"{label}\s*(.+?)(?=\n(?:Answer:|Command|Example|Details:|Next)|$)"
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 content = match.group(1).strip()
+                # Skip empty or whitespace-only fields
+                if not content:
+                    continue
+                # Skip if content starts with another field label (means current field is empty)
+                if re.match(r'^(Answer:|Command|Example:|Details:|Next step:)', content):
+                    continue
                 # Remove trailing empty lines
                 return re.sub(r'\n+$', '', content)
         return None
