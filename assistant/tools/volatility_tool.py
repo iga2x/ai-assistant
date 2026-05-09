@@ -1,4 +1,5 @@
 import subprocess
+import os
 from typing import Dict, Any
 from assistant.tools.base import BaseTool
 
@@ -57,16 +58,17 @@ class VolatilityTool(BaseTool):
         try:
             import json
             if 'vol_results.json' in output:
-                with open('vol_results.json', 'r') if os.path.exists('vol_results.json') else None:
-                    data = json.load(f)
-                    if isinstance(data, dict) and 'processes' in data:
-                        processes = data['processes']
-                        if processes:
-                            result_str = f"\n[bold cyan]MEMORY FORENSICS RESULTS:[/bold cyan]\n"
-                            result_str += f"Processes found: {len(processes)}\n"
-                            for proc in processes[:10]:
-                                result_str += f"  - {proc.get('name', 'unknown')}\n"
-                            return result_str
+                if os.path.exists('vol_results.json'):
+                    with open('vol_results.json', 'r') as f:
+                        data = json.load(f)
+                        if isinstance(data, dict) and 'processes' in data:
+                            processes = data['processes']
+                            if processes:
+                                result_str = f"\n[bold cyan]MEMORY FORENSICS RESULTS:[/bold cyan]\n"
+                                result_str += f"Processes found: {len(processes)}\n"
+                                for proc in processes[:10]:
+                                    result_str += f"  - {proc.get('name', 'unknown')}\n"
+                                return result_str
         except Exception:
             return output
 

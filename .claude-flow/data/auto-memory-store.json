@@ -1,0 +1,14 @@
+[
+  {
+    "id": "task-TASK_3",
+    "key": "TASK_3",
+    "content": "Task completed: TASK_3",
+    "namespace": "tasks",
+    "type": "task-outcome",
+    "metadata": {
+      "success": true,
+      "quality": 0.85
+    },
+    "createdAt": 1777978631644
+  }
+]

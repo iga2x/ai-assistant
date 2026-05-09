@@ -10,11 +10,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-try:
-    import schedule
-    HAS_SCHEDULE = True
-except ImportError:
-    HAS_SCHEDULE = False
+import schedule
+
 
 from assistant.memory.main import MemoryManager, EntityStore
 from assistant.db.models import RetentionPolicy, DataClassification
@@ -239,10 +236,6 @@ class RetentionManager:
 
     def start_scheduler(self):
         """Start automatic cleanup scheduler."""
-        if not HAS_SCHEDULE:
-            logger.warning("Schedule module not available, automatic cleanup disabled")
-            return False
-
         if self.scheduler_running:
             logger.warning("Scheduler already running")
             return False
