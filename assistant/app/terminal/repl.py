@@ -251,11 +251,13 @@ Available Commands:
             else:
                 default_name = val.replace("/", "_").replace(".", "_").replace("~", "home").strip("_")
                 if len(default_name) > 20: default_name = f"entry_{typ}_{hash(val)%1000}"
-                name = Prompt.ask(f"How should I remember this {typ}?", default=default_name)
+                name = Prompt.ask(f"How should I remember this {typ}? (type 'no' to skip)", default=default_name)
 
-            if name:
+            if name and name.lower() not in ["no", "skip", "n", "none"]:
                 self.pipeline.memory.entities.set(name, val, typ)
                 console.print(f"[green]✔[/green] Saved as [cyan]{name}[/cyan] in long-term memory.")
+            else:
+                console.print("[yellow]⚠[/yellow] Suggestion skipped.")
 
 
 

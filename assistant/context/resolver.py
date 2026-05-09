@@ -8,7 +8,8 @@ class ContextResolver:
 
     def resolve(self, text: str) -> str:
         """Resolve pronouns like 'it', 'that', 'same', 'again', 'there', 'my machine'."""
-        resolved = text.lower()
+        # DO NOT lowercase the whole string; Linux paths are case-sensitive.
+        resolved = text
 
         # Try to resolve common targets
         target = self.store.get("last_target")
@@ -37,17 +38,10 @@ class ContextResolver:
 
         for pattern, replacement in pronoun_map:
             if replacement:
-                # Skip if the replacement value is already in the text
-                # This prevents cascading replacements
-                if replacement in replacement_values and replacement in resolved:
-                    # Check if the original text contains this specific pattern
-                    # If the pattern exists in the original text, we should still replace it
-                    if not re.search(pattern, text, re.IGNORECASE):
-                        continue
-
                 # Use regex to replace pronouns while preserving punctuation
                 # Use count=1 to replace only first occurrence per pattern
-                resolved = re.sub(pattern, replacement, resolved, count=1)
+                # Use IGNORECASE to match "It" or "IT" or "it" without destroying the rest of the string case
+                resolved = re.sub(pattern, replacement, resolved, count=1, flags=re.IGNORECASE)
 
         return resolved
 
